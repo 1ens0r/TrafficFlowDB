@@ -37,7 +37,6 @@ DECLARE
     v_tt_speed DOUBLE PRECISION;
     v_tt_free  DOUBLE PRECISION;
     v_ratio    DOUBLE PRECISION;
-    v_tt_count INTEGER;
     t_high_speed   DOUBLE PRECISION;
     t_high_density DOUBLE PRECISION;
     t_med_speed    DOUBLE PRECISION;
@@ -71,13 +70,10 @@ BEGIN
         v_avg    := v_tt_speed;
         v_ratio  := LEAST(1.0, v_tt_speed / v_tt_free);
         v_index  := GREATEST(0.0, 1.0 - v_ratio);
-        -- Corridor load expressed in vehicles: capacity scaled by the slow-down
-        -- index (TomTom publishes no count), kept alongside real fleet counts.
-        v_tt_count := ROUND(v_capacity * v_index);
-        IF v_count < v_tt_count THEN
-            v_count := v_tt_count;
-        END IF;
-        -- Congestion from observed slow-down against free-flow.
+        -- TomTom publishes no vehicle count, and the system does not invent
+        -- one. vehicle_count therefore stays at the genuinely observed value
+        -- (zero when no GPS fleet is running) rather than a fabricated
+        -- capacity-scaled estimate. traffic_index carries the vendor signal.
         IF v_ratio < 0.25 THEN
             v_level := 'HIGH';
         ELSIF v_ratio < 0.55 THEN

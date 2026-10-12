@@ -124,11 +124,11 @@ def trends(hours: int = 12):
                       for r in cur.fetchall()]
             cur.execute(
                 """
-                SELECT date_bin(INTERVAL '1 minute', calculated_at,
+                SELECT date_bin(INTERVAL '1 minute', observed_at,
                                 TIMESTAMPTZ '2000-01-01') AS m,
-                       SUM(CASE WHEN traffic_source = 'tomtom' THEN 1 ELSE 0 END)
-                FROM traffic_history
-                WHERE calculated_at > NOW() - INTERVAL '60 minutes'
+                       COUNT(DISTINCT segment_id)
+                FROM tomtom_history
+                WHERE observed_at > NOW() - INTERVAL '60 minutes'
                 GROUP BY 1 ORDER BY 1
                 """)
             tt = [{"minute": r[0].isoformat(), "tomtom": int(r[1] or 0)}

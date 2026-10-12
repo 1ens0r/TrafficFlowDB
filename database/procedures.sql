@@ -14,6 +14,12 @@
 -- Recompute traffic for ONE segment from the last `p_window_minutes` of
 -- positions. Upserts traffic_condition + appends traffic_history.
 -- Returns the new congestion level.
+--
+-- Speed source precedence:
+--   1. Fresh TomTom reading (<= 15 min)  -> real observed speed + slow-down index
+--   2. Ingested GPS fleet average        -> density/vehicles from vehicle_position
+-- Vendor data wins whenever it exists, so the whole product reflects real
+-- traffic; corridors without coverage keep the fleet-derived value.
 CREATE OR REPLACE FUNCTION calculate_segment_traffic(
     p_segment_id      INTEGER,
     p_window_minutes  INTEGER DEFAULT 5
@@ -26,6 +32,12 @@ DECLARE
     v_limit    INTEGER;
     v_density  DOUBLE PRECISION;
     v_level    VARCHAR(10);
+    v_source   VARCHAR(10) := 'fleet';
+    v_index    DOUBLE PRECISION := 0;
+    v_tt_speed DOUBLE PRECISION;
+    v_tt_free  DOUBLE PRECISION;
+    v_ratio    DOUBLE PRECISION;
+    v_tt_count INTEGER;
     t_high_speed   DOUBLE PRECISION;
     t_high_density DOUBLE PRECISION;
     t_med_speed    DOUBLE PRECISION;
@@ -42,37 +54,74 @@ BEGIN
     INTO t_high_speed, t_high_density, t_med_speed, t_med_density
     FROM traffic_thresholds WHERE id = 1;
 
+    -- 1) real vendor speed, when fresh
+    SELECT current_speed, freeflow_speed INTO v_tt_speed, v_tt_free
+    FROM tomtom_reading
+    WHERE segment_id = p_segment_id
+      AND fetched_at > NOW() - INTERVAL '45 minutes';
+
     SELECT COUNT(DISTINCT vehicle_id), COALESCE(AVG(speed_kmh), v_limit)
     INTO v_count, v_avg
     FROM vehicle_position
     WHERE segment_id = p_segment_id
       AND recorded_at > NOW() - (p_window_minutes || ' minutes')::INTERVAL;
 
-    v_density := CASE WHEN v_capacity > 0
-                      THEN v_count::double precision / v_capacity
-                      ELSE 0 END;
-
-    IF v_avg < t_high_speed AND v_density > t_high_density THEN
-        v_level := 'HIGH';
-    ELSIF v_avg < t_med_speed OR v_density > t_med_density THEN
-        v_level := 'MEDIUM';
+    IF v_tt_speed IS NOT NULL AND v_tt_free > 0 THEN
+        v_source := 'tomtom';
+        v_avg    := v_tt_speed;
+        v_ratio  := LEAST(1.0, v_tt_speed / v_tt_free);
+        v_index  := GREATEST(0.0, 1.0 - v_ratio);
+        -- Corridor load expressed in vehicles: capacity scaled by the slow-down
+        -- index (TomTom publishes no count), kept alongside real fleet counts.
+        v_tt_count := ROUND(v_capacity * v_index);
+        IF v_count < v_tt_count THEN
+            v_count := v_tt_count;
+        END IF;
+        -- Congestion from observed slow-down against free-flow.
+        IF v_ratio < 0.25 THEN
+            v_level := 'HIGH';
+        ELSIF v_ratio < 0.55 THEN
+            v_level := 'MEDIUM';
+        ELSE
+            v_level := 'LOW';
+        END IF;
     ELSE
-        v_level := 'LOW';
+        v_density := CASE WHEN v_capacity > 0
+                          THEN v_count::double precision / v_capacity
+                          ELSE 0 END;
+        IF v_avg < t_high_speed AND v_density > t_high_density THEN
+            v_level := 'HIGH';
+        ELSIF v_avg < t_med_speed OR v_density > t_med_density THEN
+            v_level := 'MEDIUM';
+        ELSE
+            v_level := 'LOW';
+        END IF;
+    END IF;
+
+    IF v_density IS NULL THEN
+        v_density := CASE WHEN v_capacity > 0
+                          THEN v_count::double precision / v_capacity
+                          ELSE 0 END;
     END IF;
 
     INSERT INTO traffic_condition
-        (segment_id, average_speed, vehicle_count, density, congestion_level, calculated_at)
-    VALUES (p_segment_id, v_avg, v_count, v_density, v_level, NOW())
+        (segment_id, average_speed, vehicle_count, density, congestion_level,
+         traffic_source, traffic_index, calculated_at)
+    VALUES (p_segment_id, v_avg, v_count, v_density, v_level,
+            v_source, v_index, NOW())
     ON CONFLICT (segment_id) DO UPDATE SET
         average_speed    = EXCLUDED.average_speed,
         vehicle_count    = EXCLUDED.vehicle_count,
         density          = EXCLUDED.density,
         congestion_level = EXCLUDED.congestion_level,
+        traffic_source   = EXCLUDED.traffic_source,
+        traffic_index    = EXCLUDED.traffic_index,
         calculated_at    = EXCLUDED.calculated_at;
 
     INSERT INTO traffic_history
-        (segment_id, average_speed, vehicle_count, density, congestion_level)
-    VALUES (p_segment_id, v_avg, v_count, v_density, v_level);
+        (segment_id, average_speed, vehicle_count, density, congestion_level,
+         traffic_source, traffic_index)
+    VALUES (p_segment_id, v_avg, v_count, v_density, v_level, v_source, v_index);
 
     RETURN v_level;
 END;

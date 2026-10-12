@@ -31,6 +31,8 @@ SELECT
     COALESCE(tc.vehicle_count, 0)   AS vehicle_count,
     COALESCE(tc.density, 0)         AS density,
     COALESCE(tc.congestion_level, 'LOW') AS congestion_level,
+    COALESCE(tc.traffic_source, 'fleet') AS traffic_source,
+    COALESCE(tc.traffic_index, 0) AS traffic_index,
     tc.calculated_at
 FROM road_segment rs
 JOIN intersection i1 ON i1.intersection_id = rs.start_intersection_id

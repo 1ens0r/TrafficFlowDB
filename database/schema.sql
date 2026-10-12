@@ -153,6 +153,28 @@ CREATE TABLE IF NOT EXISTS traffic_history (
     calculated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- ---------------------------------------------------------------- traffic_origin --
+-- Which source produced the current snapshot: ingested GPS fleet, or a real
+-- vendor speed reading from TomTom. Declared here (not only in the migration)
+-- because views.sql is applied before migrations and reads these columns.
+ALTER TABLE traffic_condition ADD COLUMN IF NOT EXISTS traffic_source VARCHAR(10)
+    NOT NULL DEFAULT 'fleet';
+ALTER TABLE traffic_condition ADD COLUMN IF NOT EXISTS traffic_index DOUBLE PRECISION
+    NOT NULL DEFAULT 0;
+-- Same origin columns on the history table so the source mix can be charted
+-- over time ("how much of this network is real vendor data vs. fleet GPS").
+ALTER TABLE traffic_history ADD COLUMN IF NOT EXISTS traffic_source VARCHAR(10)
+    NOT NULL DEFAULT 'fleet';
+ALTER TABLE traffic_history ADD COLUMN IF NOT EXISTS traffic_index DOUBLE PRECISION
+    NOT NULL DEFAULT 0;
+DO $$ BEGIN
+    ALTER TABLE traffic_condition ADD CONSTRAINT chk_traffic_source
+        CHECK (traffic_source IN ('fleet', 'tomtom'));
+    ALTER TABLE traffic_condition ADD CONSTRAINT chk_traffic_index
+        CHECK (traffic_index >= 0 AND traffic_index <= 1);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
 -- ---------------------------------------------------------------- routing --
 CREATE TABLE IF NOT EXISTS route_request (
     request_id               SERIAL PRIMARY KEY,

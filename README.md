@@ -33,12 +33,15 @@ not measured.
 | congestion level | derived from measured slow-down ratio | **measured** — see §5 |
 | traffic incidents | TomTom Incident API | **measured** — genuine coordinates |
 | travel time, distance | dijkstra over measured edge weights | **measured** |
-| vehicle counts | — | **unavailable** — tomtom publishes neither counts nor probe traces |
-| map dot position | interpolated along corridor geometry | **inferred** — see §6 |
+| road geometry | tomtom's own matched polyline | **measured** — the road tomtom resolved, stored verbatim |
+
 
 individual probe vehicles are licenced exclusively by their operators and are
-not redistributable through any public interface. any implementation purporting
-to expose them is either simulating them or scraping a consumer client.
+not redistributable through any public interface. this system therefore
+**reports no vehicle counts at all**: `traffic_condition.vehicle_count` is zero
+unless a real GPS feed is ingesting, and no per-vehicle figure is synthesised.
+no vehicle markers are rendered. the interface presents measured speed,
+free-flow speed and the derived slow-down index, and nothing else.
 
 ---
 
@@ -92,6 +95,12 @@ under two hours. four mechanisms bound consumption:
    so incidents are swept one hub per cycle on rotation rather than as a single
    all-india query, which always fails.
 
+**vendor geometry.** `flowSegmentData` returns the polyline of the road it
+actually matched for a given probe. that polyline is captured verbatim into
+`tomtom_road_geometry` and is what the map draws. corridors are therefore
+rendered along tomtom's own road alignment, and a corridor that has never been
+probed still has to be identified as unverified rather than quietly drawn.
+
 the default `240 s × 4` configuration projects to approximately **1,200
 transactions per day**, preserving headroom for manual refreshes.
 `GET /api/tomtom/status` reports live spend, coverage and poller health; the
@@ -134,8 +143,11 @@ asynchronously and cached, and the rest api never blocks on an upstream call. a
 vendor outage therefore degrades coverage rather than availability.
 
 `intersection` rows are graph nodes; `road_segment` rows are bidirectional edges.
-optional GPS ingest, when enabled, follows the identical downstream path and is
-the only producer of `gps_data`; it is not required for operation.
+the ingest endpoints (`POST /api/gps`, `POST /api/gps/batch`) remain open and
+map-match any fix submitted to them, but no simulator ships with the system and
+no process generates synthetic traffic. `gps_data` and `vehicle_position`
+therefore remain empty in normal operation, and the density-based classifier is
+inactive by design.
 
 bulk ingest maintains a constant round-trip count irrespective of batch size:
 one vehicle upsert, two bulk inserts, and a single `refresh_all_traffic()` call.
@@ -162,9 +174,10 @@ MEDIUM   ratio < 0.55
 LOW      otherwise
 ```
 
-**gps-backed corridors** — the original rule over ingested positions, with
-thresholds held in the `traffic_thresholds` singleton and read by the stored
-procedure on every invocation:
+**gps-backed corridors** — retained for completeness where a third party
+submits real GPS fixes through the public ingest endpoints. thresholds are held
+in the `traffic_thresholds` singleton and read by the stored procedure on every
+invocation:
 
 ```
 density = distinct_vehicles / capacity
@@ -180,29 +193,21 @@ presented as current.
 
 ---
 
-## 6. rendering scale: why vehicles do not visibly move at national zoom
+## 6. rendering scale
 
-this is a property of scale, not a defect. corridors span 100 to 1,000 km. at a
-whole-of-india viewport, 250 km occupies roughly 150 pixels, so a vehicle
-travelling at 100 km/h advances approximately **0.02 pixels per frame** — the
-motion is physically imperceptible. production traffic systems display flow
-rather than individual vehicles at this scale for precisely this reason.
+corridors are drawn from two sources, in preference order: tomtom's own matched
+polyline where one has been captured, otherwise the straight chord between the
+two hubs. the straight chord is a placeholder and is replaced by real geometry
+as soon as the corridor is probed — no synthetic alignment is invented to fill
+the gap.
 
-the map is therefore explicit about resolution:
+corridor thickness is driven by severity, and colour is derived from measured
+speed against free-flow on a continuous ramp rather than three discrete
+buckets. live incidents are drawn at their true coordinates.
 
-- **z ≥ 7** — dots traverse the corridor at the **measured** speed, so a
-  congested corridor visibly decelerates while a free-flowing one advances
-  rapidly.
-- **below z 7** — direction-of-flow is rendered instead, rather than
-  simulating motion that does not exist at that scale.
-
-positions are interpolated along corridor geometry because tomtom publishes
-segment speeds rather than vehicle traces. requesting a route flies the viewport
-to z ≤ 9, where the motion is resolvable. all overlays are composited on a single
-canvas within one `requestAnimationFrame` pass, sustaining frame rate at any
-zoom level.
-
----
+nothing on the map represents a vehicle. earlier revisions animated markers
+along corridors to convey flow; that was removed because a marker that looks
+like a car invites the reading that it is a car, and it is not.
 
 ## 7. routing
 
@@ -323,6 +328,7 @@ approximately 1.8M history rows per hour and latency grows without bound.
 | metric                            | value                              |
 |-----------------------------------|------------------------------------|
 | bulk ingest throughput            | ~3,000 fixes/s (250 in ~60 ms)     |
+| vendor road geometry captured     | 12 corridors, 4,129 polyline points |
 | `/api/network/positions`          | ~8 ms (was ~100 ms pre-indexing)   |
 | analytics rollups                 | ~3–7 ms                            |
 | dijkstra, 32 nodes / 42 edges     | ~0.05 ms                           |
@@ -339,11 +345,9 @@ approximately 1.8M history rows per hour and latency grows without bound.
 backend/     main, database pool with read-only role, runtime config,
              querylog, monitor (request timing), maintenance (retention),
              routes/ (gps, network, traffic, routing, vehicles, stats, config,
-             scenarios, command, sql, logs, fleet, tomtom, analytics)
+             command, sql, logs, tomtom, analytics)
              services/ (geo, gps_processor, ingest_bulk, traffic_analyzer,
-             route_optimizer, scenarios, command, sqllab, tomtom poller)
-simulator/   optional gps ingest: vehicle mover, graph construction and trip
-             planning, cli entrypoint, server-side fleet manager
+             route_optimizer, command, sqllab, tomtom poller)
 frontend/    dashboard: index.html, styles.css, app.js (leaflet + canvas)
 database/    schema, views, triggers, procedures, network migrations, vendor
              tables, probe calibration, performance hardening
@@ -351,9 +355,8 @@ tests/       47 pytest cases: geometry, congestion rules, dijkstra, console
              parser, sql guard, vendor poller
 ```
 
-the simulator is retained solely as an optional demonstration of the gps
-ingest path and is unreachable from the dashboard. all user-facing state derives
-from vendor data.
+no simulator ships with this system. every user-facing quantity derives from
+vendor measurement.
 
 ---
 
@@ -412,19 +415,18 @@ account for local conditions, closures reported by authorities, temporary
 obstructions, weather, or emergency response routing. do not rely on it to
 direct a vehicle.
 
-**individual vehicles.** the platform does not possess, reconstruct or expose
-individual vehicle positions or identities. probe data of this kind is
-commercially licenced and is not available through any public interface. any
-per-vehicle figure presented by the system is an **estimate derived from
-corridor capacity and the observed slow-down ratio**, never an observation, and
-is labelled as such. vehicle-like markers rendered on the map are a visual
-representation of corridor flow rate and carry **no association with any real
-vehicle**.
+**individual vehicles.** the platform does not possess, reconstruct, estimate or
+expose individual vehicle positions or counts. probe data of this kind is
+commercially licenced and is not available through any public interface. the
+system reports **no per-vehicle figure of any kind**: vehicle counts remain at
+the genuinely observed value and are zero in normal operation. no vehicle
+markers are rendered anywhere in the interface.
 
-**simulation.** the gps ingest simulator is synthetic. it generates plausible
-origin–destination trips and is retained solely to demonstrate the ingestion
-and normalisation pipeline. simulated data is marked by `traffic_source =
-'fleet'` and is never presented as observed traffic. it is inactive by default.
+**no simulation.** no simulator, fleet generator or scenario injector ships
+with this system, and no process fabricates traffic. the only writer of
+congestion state is the vendor poller. the `traffic_source = 'gps'` path
+remains in the schema solely so that genuine third-party GPS fixes submitted to
+the public ingest endpoints are represented honestly.
 
 **no warranty.** this software is provided as-is, without warranty of any kind,
 express or implied. the authors accept no liability for loss arising from its

@@ -68,8 +68,6 @@ const tileLayer = HAS_MAP ? L.tileLayer(TILES[document.documentElement.dataset.t
 if (HAS_MAP) L.control.zoom({ position: "bottomright" }).addTo(map);
 if (HAS_MAP) {
   map.on("zoomend", () => {
-    const hint = $("zoomHint");
-    if (hint) hint.classList.toggle("hide", map.getZoom() >= FLOW_MIN_ZOOM);
     // vehicle dots appear/disappear by zoom — re-render from the last snapshot
     if (lastPositions.length) renderPositions(lastPositions);
   });
@@ -182,12 +180,19 @@ async function loadNetwork() {
   }
   for (const s of segments) {
     if (segLines.has(s.id)) continue;
-    segLines.set(s.id, L.polyline([[s.a_lat, s.a_lon], [s.b_lat, s.b_lon]], {
+    // Prefer TomTom's own road alignment; fall back to the straight chord only
+    // until this corridor has been probed at least once.
+    const pts = (s.road_polyline && s.road_polyline.length >= 2)
+      ? s.road_polyline.map((p) => [p[0], p[1]])
+      : [[s.a_lat, s.a_lon], [s.b_lat, s.b_lon]];
+    segLines.set(s.id, L.polyline(pts, {
       color: COLORS.LOW, weight: 2.5, opacity: 0.5, lineCap: "round",
-    }).bindTooltip(`${s.name}<br>${s.distance_km} km · limit ${s.speed_limit} km/h`).addTo(segLayer));
+    }).bindTooltip(
+      `${s.name}<br>${s.distance_km} km · limit ${s.speed_limit} km/h` +
+      (s.road_points ? `<br><span style="color:#a855f7">${s.road_points}-point TomTom road · ${s.frc}</span>` : "")
+    ).addTo(segLayer));
   }
   fitNetwork(); // frame the whole network once, instead of guessing a view
-  initFlow();
 }
 
 /* Frame every corridor in view. Runs once (and on resize) so the graph fills
@@ -203,126 +208,6 @@ function fitNetwork(animate = false) {
   const b = networkBounds();
   try { map.fitBounds(b, { padding: [28, 28], animate, maxZoom: 7 }); }
   catch { /* container not laid out yet */ }
-}
-
-/* ---- corridor flow layer -----------------------------------------------------
-   One canvas over the map, one requestAnimationFrame loop, all particles drawn
-   in a single pass — smooth at any zoom, unlike 500 individual SVG markers.
-   Each dot MOVES AT THE REAL SPEED TomTom reports for that corridor
-   (km/h ÷ km = time to cross), and how many dots a corridor carries comes from
-   the real slow-down index. Positions are interpolated along the corridor
-   because TomTom publishes segment speeds, not vehicle GPS traces.          */
-const flow = { canvas: null, ctx: null, corridors: new Map(), raf: 0, last: 0 };
-
-function initFlow() {
-  if (!HAS_MAP) return;
-  const c = document.createElement("canvas");
-  c.className = "tf-flow";
-  document.getElementById("map").appendChild(c);
-  flow.canvas = c;
-  flow.ctx = c.getContext("2d");
-  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  requestAnimationFrame(stepFlow);
-}
-
-function syncFlow(rows) {
-  flow.corridors.clear();
-  for (const t of rows) {
-    const s = segments.find((x) => x.id === t.segment_id);
-    if (!s || !(s.distance_km > 0)) continue;
-    const tt = ttBySeg.get(t.segment_id);
-    // Real observed speed wins; otherwise the fleet-derived average.
-    const kmh = tt && tt.current_speed != null ? tt.current_speed : t.average_speed;
-    const idx = Number(t.traffic_index || 0);
-    // Free-flow road -> sparse and fast; jammed -> dense and slow.
-    const n = Math.max(1, Math.min(20, Math.round(idx * 20) + 1));
-    const seed = (t.segment_id * 9301 + 49297) % 233280 / 233280;
-    const pts = [];
-    for (let i = 0; i < n; i++) {
-      pts.push({
-        t: (i + seed) / n,
-        dir: (t.segment_id + i) % 2 ? 1 : -1,
-        j: 0.85 + ((i * 37) % 29) / 100,  // per-dot speed jitter
-      });
-    }
-    flow.corridors.set(t.segment_id, {
-      a: [s.a_lat, s.a_lon], b: [s.b_lat, s.b_lon],
-      km: s.distance_km, kmh: Math.max(3, kmh), pts,
-      color: COLORS[t.congestion_level] || COLORS.LOW,
-      real: !!tt,
-    });
-  }
-}
-
-/* Zoom threshold for moving vehicles. At India scale a 250 km corridor is
-   ~150 px wide, so a car doing 100 km/h advances ~0.02 px per frame — real
-   motion is physically invisible. Below this zoom we show direction-of-flow
-   instead; above it, the dots move at the real reported speed. */
-const FLOW_MIN_ZOOM = 7;
-
-function stepFlow(now) {
-  const dt = flow.last ? Math.min(0.25, (now - flow.last) / 1000) : 0;
-  flow.last = now;
-  drawFlow(dt);
-  requestAnimationFrame(stepFlow);
-}
-
-function drawFlow(dt) {
-  const c = flow.canvas, g = flow.ctx;
-  if (!c || !g || !HAS_MAP) return;
-  const size = map.getSize();
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const W = size.x, H = size.y;
-  if (c.width !== W * dpr || c.height !== H * dpr) {
-    c.width = W * dpr; c.height = H * dpr;
-    c.style.width = W + "px"; c.style.height = H + "px";
-  }
-  g.setTransform(dpr, 0, 0, dpr, 0, 0);
-  g.clearRect(0, 0, W, H);
-  if (!flow.visible) return;
-  const z = map.getZoom();
-
-  for (const cor of flow.corridors.values()) {
-    const p1 = map.latLngToContainerPoint(cor.a);
-    const p2 = map.latLngToContainerPoint(cor.b);
-    if ((p1.x < -80 && p2.x < -80) || (p1.x > W + 80 && p2.x > W + 80)) continue;
-    const rate = (cor.kmh / cor.km) * (dt / 3600); // fraction covered / second
-
-    if (z < FLOW_MIN_ZOOM) {
-      // Country scale: a real vehicle covers a fraction of a pixel, so show
-      // direction-of-flow as a travelling highlight instead of pretending
-      // the vehicles are visibly driving.
-      const phase = (performance.now() / 2600) % 1;
-      for (let k = 0; k < 2; k++) {
-        const t = (phase + k * 0.5) % 1;
-        const x = p1.x + (p2.x - p1.x) * t;
-        const y = p1.y + (p2.y - p1.y) * t;
-        g.beginPath();
-        g.arc(x, y, 2.2, 0, 6.2832);
-        g.fillStyle = "#fff";
-        g.globalAlpha = 0.55;
-        g.fill();
-      }
-      g.globalAlpha = 1;
-      continue;
-    }
-
-    // Zoomed in: dots move at the real reported speed.
-    for (const d of cor.pts) {
-      let t = d.t + d.dir * rate * d.j;
-      while (t > 1) t -= 1;
-      while (t < 0) t += 1;
-      d.t = t;
-      const x = p1.x + (p2.x - p1.x) * t;
-      const y = p1.y + (p2.y - p1.y) * t;
-      g.beginPath();
-      g.arc(x, y, cor.real ? 2.8 : 2.2, 0, 6.2832);
-      g.fillStyle = cor.color;
-      g.globalAlpha = cor.real ? 0.95 : 0.55;
-      g.fill();
-    }
-  }
-  g.globalAlpha = 1;
 }
 
 /* ---- live rendering ---------------------------------------------------------- */
@@ -351,15 +236,11 @@ function renderTraffic(rows) {
     if (t.congestion_level === "HIGH") high++;
     else if (t.congestion_level === "MEDIUM") med++;
   }
-  syncFlow(rows);
   if (lastRouteSegs.length) drawRoute(lastRouteSegs, false);
   renderTable();
   return { high, med };
 }
 
-/* Corridors carry the traffic story now: dots along each road are vehicles
-   moving at the real measured speed, so a jam visibly crawls. */
-function renderCorridorParticles() { /* superseded by the canvas flow layer */ }
 function renderPositions(rows) {
   lastPositions = rows || [];
   vehicleLayer.clearLayers();
@@ -405,20 +286,22 @@ function renderStats(s, cong) {
 }
 function renderTable() {
   $("netBody").innerHTML = lastTraffic.map((t) => {
+    const s = segments.find((x) => x.id === t.segment_id);
+    const idx = Number(t.traffic_index || 0);
     const tt = ttBySeg.get(t.segment_id);
     return `
     <tr><td>${t.segment_name}</td>
     <td><span class="scope-tag ${t.scope}">${t.scope}</span></td>
-    <td>${t.distance_km}</td><td>${Number(t.average_speed).toFixed(0)}</td>
-    <td>${t.vehicle_count}</td><td>${Number(t.density).toFixed(2)}</td>
+    <td>${t.distance_km}</td>
+    <td><b>${Number(t.average_speed).toFixed(0)}</b></td>
+    <td>${tt ? Number(tt.freeflow_speed).toFixed(0) : "—"}</td>
+    <td>${(idx * 100).toFixed(0)}%</td>
     <td><span class="pill ${t.congestion_level}">${t.congestion_level}</span></td>
-    <td class="tt-cell">${tt ? Number(tt.current_speed).toFixed(0) + " km/h" : "—"}</td></tr>`;
+    <td class="tt-cell">${s && s.road_points ? s.road_points + " pts · " + s.frc : "—"}</td></tr>`;
   }).join("");
 }
 /* ---- layer toggles ---------------------------------------------------------- */
 function wireLayers() {
-  flow.visible = true;
-  on("lyrVeh", "change", (e) => { flow.visible = e.target.checked; });
   const mapOf = { lyrSeg: segLayer, lyrHub: hubLayer, lyrTT: tomtomLayer, lyrInc: incidentLayer };
   for (const [id, layer] of Object.entries(mapOf)) {
     $(id).addEventListener("change", (e) => {

@@ -20,6 +20,7 @@ incident tx/day — safely inside budget with headroom for manual refreshes.
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 
@@ -266,6 +267,15 @@ def calibrate_probes(limit: int = 6) -> dict:
 
 
 # -- HTTP --------------------------------------------------------------------
+def _haversine_km(lat1, lon1, lat2, lon2) -> float:
+    from math import asin, cos, radians, sin, sqrt
+    r = 6371.0088
+    dlat, dlon = radians(lat2 - lat1), radians(lon2 - lon1)
+    a = (sin(dlat / 2) ** 2
+         + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2)
+    return 2 * r * asin(sqrt(a))
+
+
 def _fetch_flow(key: str, lat: float, lon: float) -> dict | None:
     global _last_err
     try:
@@ -284,14 +294,34 @@ def _fetch_flow(key: str, lat: float, lon: float) -> dict | None:
         return None
     try:
         f = r.json()["flowSegmentData"]
-        return {
+        out = {
             "current_speed": float(f.get("currentSpeed", 0)),
             "freeflow_speed": float(f.get("freeFlowSpeed", 0)),
             "travel_time_s": float(f.get("currentTravelTime", 0)),
             "freeflow_time_s": float(f.get("freeFlowTravelTime", 0)),
             "confidence": float(f.get("confidence", 0)),
             "road_closure": bool(f.get("roadClosure", False)),
+            "frc": str(f.get("frc") or ""),
+            "polyline": [],
+            "length_km": 0.0,
         }
+        # TomTom returns the geometry of the road it matched. Capture it so
+        # the map can draw TomTom's own alignment instead of our straight line.
+        coords = (f.get("coordinates") or {}).get("coordinate") or []
+        pts = []
+        for p in coords[:500]:
+            la, lo = p.get("latitude"), p.get("longitude")
+            if la is None or lo is None:
+                continue
+            pts.append([round(float(la), 6), round(float(lo), 6)])
+        if len(pts) >= 2:
+            km = 0.0
+            for i in range(1, len(pts)):
+                km += _haversine_km(pts[i - 1][0], pts[i - 1][1],
+                                    pts[i][0], pts[i][1])
+            out["polyline"] = pts
+            out["length_km"] = round(km, 4)
+        return out
     except Exception as exc:  # noqa: BLE001
         _last_err = f"parse:{type(exc).__name__}"
         return None
@@ -393,6 +423,24 @@ def poll_once(manual: list[int] | None = None) -> dict:
                         VALUES (%s,%s,%s,%s,%s,NOW())
                         """, (seg["segment_id"], flow["current_speed"],
                               flow["freeflow_speed"], index, level))
+                    # Persist TomTom's own road alignment for this corridor.
+                    if flow.get("polyline"):
+                        cur.execute(
+                            """
+                            INSERT INTO tomtom_road_geometry
+                                (segment_id, polyline, point_count,
+                                 length_km, frc, captured_at)
+                            VALUES (%s, %s::jsonb, %s, %s, %s, NOW())
+                            ON CONFLICT (segment_id) DO UPDATE SET
+                                polyline = EXCLUDED.polyline,
+                                point_count = EXCLUDED.point_count,
+                                length_km = EXCLUDED.length_km,
+                                frc = EXCLUDED.frc,
+                                captured_at = EXCLUDED.captured_at
+                            """, (seg["segment_id"],
+                                  json.dumps(flow["polyline"]),
+                                  len(flow["polyline"]),
+                                  flow["length_km"], flow.get("frc") or None))
                     fetched += 1
                 used = _used_today(cur)
                 # Vendor speeds are authoritative, so recompute the snapshot

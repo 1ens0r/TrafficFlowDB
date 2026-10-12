@@ -56,6 +56,22 @@ CREATE INDEX IF NOT EXISTS idx_tomtom_history_time
 CREATE INDEX IF NOT EXISTS idx_tomtom_history_segment
     ON tomtom_history (segment_id, observed_at DESC);
 
+-- The real road, as TomTom resolved it.
+--
+-- flowSegmentData returns the geometry of the road it actually matched for
+-- our probe point. Storing that polyline means the network drawn on the map
+-- is TomTom's own road alignment rather than a straight line we invented
+-- between two cities, and it is verifiable evidence that a corridor's probe
+-- sits on a real road.
+CREATE TABLE IF NOT EXISTS tomtom_road_geometry (
+    segment_id  INTEGER PRIMARY KEY REFERENCES road_segment(segment_id) ON DELETE CASCADE,
+    polyline    JSONB       NOT NULL,           -- [[lat, lon], ...] in travel order
+    point_count INTEGER     NOT NULL DEFAULT 0,
+    length_km   DOUBLE PRECISION NOT NULL DEFAULT 0,
+    frc         VARCHAR(10),                    -- functional road class
+    captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Vendor read + derived index in one place for the dashboard and SQL Lab.
 CREATE OR REPLACE VIEW tomtom_segment_traffic AS
 SELECT

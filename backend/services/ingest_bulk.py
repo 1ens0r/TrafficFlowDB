@@ -20,7 +20,7 @@ def bulk_ingest(points: list[dict]) -> dict:
     t0 = time.perf_counter()
     pool = get_pool()
     with pool.connection() as conn:
-        # 1. map-match anything missing a segment (simulator/fleet always send one).
+        # 1. map-match any fix that arrives without a segment reference.
         geoms = segment_geometries(conn)
         for p in points:
             if p.get("segment_id") is None:

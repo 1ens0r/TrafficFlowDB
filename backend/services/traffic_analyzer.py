@@ -2,7 +2,7 @@
 
 The authoritative congestion rule lives in the stored procedure
 `calculate_segment_traffic`. This module mirrors it for in-Python use
-(routing weights, simulator) — keep the two in sync.
+(routing weights) — keep the two in sync.
 """
 from __future__ import annotations
 

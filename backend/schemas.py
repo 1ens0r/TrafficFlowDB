@@ -13,7 +13,7 @@ class GpsIngest(BaseModel):
     longitude: float = Field(ge=-180, le=180)
     speed_kmh: float = Field(ge=0, le=300)
     timestamp: datetime | None = None
-    segment_id: int | None = None  # simulator may send it; else map-matched
+    segment_id: int | None = None  # optional; map-matched when absent
 
 
 class GpsBatch(BaseModel):

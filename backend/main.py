@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from . import maintenance, monitor, querylog, runtime
 from .config import settings
 from .database import close_pool, get_pool, init_db, wait_for_db
-from .routes import analytics, command, config, fleet, gps, logs, network, routing, scenarios, sql, stats, tomtom, traffic, vehicles
+from .routes import analytics, command, config, gps, logs, network, routing, sql, stats, tomtom, traffic, vehicles
 
 FRONTEND_DIR = pathlib.Path(__file__).resolve().parent.parent / "frontend"
 ASSET_VERSION = str(int(time.time()))
@@ -26,14 +26,11 @@ ASSET_VERSION = str(int(time.time()))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from simulator.fleet import FleetManager
     from backend.services import tomtom as tomtom_svc
     wait_for_db()
     init_db()
     querylog.log("NET", "lifespan: schema + seed + migrations applied", 0,
                  "API ready")
-    app.state.fleet = FleetManager()
-    app.state.fleet.start()
     app.state.tomtom_task = asyncio.create_task(tomtom_svc.run_forever())
     app.state.maint_task = asyncio.create_task(maintenance.run_forever())
     yield
@@ -43,7 +40,6 @@ async def lifespan(app: FastAPI):
             await task
         except asyncio.CancelledError:
             pass
-    await app.state.fleet.stop()
     close_pool()
 
 
@@ -76,8 +72,8 @@ async def perf_and_cache(request: Request, call_next):
 
 for router in (gps.router, vehicles.router, traffic.router,
                network.router, routing.router, stats.router,
-               config.router, scenarios.router, command.router, logs.router,
-               fleet.router, sql.router, tomtom.router, analytics.router):
+               config.router, command.router, logs.router,
+               sql.router, tomtom.router, analytics.router):
     app.include_router(router)
 
 

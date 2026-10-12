@@ -81,7 +81,7 @@ def _weight(seg: dict, priority: bool, mode: str = "time") -> tuple[float, float
 
     Speed precedence: emergency priority → speed limit; fresh TomTom vendor
     speed (age window shared with the poller, .get-tolerant so unit-test
-    graphs without TomTom keys behave exactly as before); fleet-observed
+    graphs without TomTom keys behave exactly as before); gps-observed
     average; derated limit.
     """
     if priority:
@@ -150,7 +150,7 @@ def dijkstra(graph: dict, source: int, target: int, priority: bool = False,
                 and tt_age <= TOMTOM_ROUTE_MAX_AGE_SEC and seg["tomtom_speed"] >= 5.0):
             src = "tomtom"
         elif seg["vehicle_count"] > 0:
-            src = "fleet"
+            src = "gps"
         else:
             src = "limit"
         eta = travel_time_min(seg["distance_km"], speed)

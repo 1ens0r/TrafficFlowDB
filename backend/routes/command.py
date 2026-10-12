@@ -49,8 +49,6 @@ def examples():
 
 @router.post("")
 def run_command(body: CommandIn):
-    from ..services import scenarios
-
     t0 = time.perf_counter()
     action = interpret(body.text, _nodes())
     kind = action["action"]
@@ -68,21 +66,28 @@ def run_command(body: CommandIn):
         elif kind == "stats":
             result = overview()
         elif kind == "traffic_request":
-            from ..services.scenarios import _segments_with_geo  # noqa: PLC2701
             with get_pool().connection() as conn:
-                segs = _segments_with_geo(conn, "AND rs.segment_name ILIKE %s",
-                                          (f"%{action['query']}%",))
-                ids = [s["id"] for s in segs[:8]]
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT rs.segment_id, rs.segment_name
+                    FROM road_segment rs
+                    WHERE rs.is_active AND rs.segment_name ILIKE %s
+                    LIMIT 8
+                    """, (f"%{action['query']}%",))
+                ids = [r[0] for r in cur.fetchall()]
                 with conn.cursor() as cur:
                     cur.execute(
                         "SELECT * FROM live_traffic_summary WHERE segment_id = ANY(%s)",
                         (ids or [-1],))
                     cols = [d[0] for d in cur.description]
                     result = [dict(zip(cols, r, strict=True)) for r in cur.fetchall()]
-        elif kind == "jam_request":
-            result = scenarios.inject_jam(None, action["query"], action["count"])
-        elif kind == "reset":
-            result = scenarios.reset()
+        elif kind in ("jam_request", "reset"):
+            # Simulation was removed: the system reports measured traffic and
+            # never injects fabricated vehicles.
+            result = {"error": "simulation removed — this system reports "
+                               "measured traffic only",
+                      "examples": EXAMPLES}
         elif kind in ("clarify_route", "place"):
             result = action
         elif kind == "help":

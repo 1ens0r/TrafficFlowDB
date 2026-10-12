@@ -9,7 +9,12 @@ websocket, and a browser dashboard — reads the same derived state.
 corridor speeds, congestion levels, road incidents and route estimates are
 derived from **live TomTom Traffic API** measurements. no synthetic traffic is
 required at any point. see §1 for an explicit statement of which quantities are
-measured and which are inferred.
+measured and which are inferred, and §15 for the full disclaimer.
+
+> **individual vehicle data is not available.** TomTom publishes corridor
+> speeds, not vehicle positions or counts. per-vehicle figures shown by this
+> system are estimates derived from capacity and observed speed, and vehicle
+> markers on the map are a representation of flow rate, not tracked cars.
 
 network: **32 national highway hubs, 42 bidirectional trunk corridors**, one
 connected graph, permitting single-query routing across the full subcontinent
@@ -381,3 +386,48 @@ foreign keys, check constraints, indexes, views, triggers, procedures) →
 implementation (schema → cached vendor ingestion → classifier → router →
 dashboard) → verification (live end-to-end, with provenance established at every
 stage).
+
+---
+
+## 15. disclaimer
+
+**data sources.** corridor speeds and traffic incidents are retrieved from the
+TomTom Traffic API and remain the property of TomTom. this repository does not
+redistribute, resell or mirror that data, and stores only what is required to
+serve the application. the service is subject to tomtom's terms of service and
+its free-tier quota; usage beyond that quota is neither authorised nor
+supported here.
+
+**accuracy.** traffic observations are sampled at discrete points and
+interpolated between them. measured values are accurate only as of their
+retrieval timestamp and will silently degrade as they age. route estimates are
+derived from those observations and inherit their uncertainty; the
+shortest-versus-fastest comparison in §7 is a property of the current estimate,
+not a guarantee about any future journey.
+
+**not for navigation.** this system is an academic and demonstrative work. it
+is **not fit for operational, safety-critical or commercial navigation use.**
+congestion classified here reflects corridor speeds at scale and does not
+account for local conditions, closures reported by authorities, temporary
+obstructions, weather, or emergency response routing. do not rely on it to
+direct a vehicle.
+
+**individual vehicles.** the platform does not possess, reconstruct or expose
+individual vehicle positions or identities. probe data of this kind is
+commercially licenced and is not available through any public interface. any
+per-vehicle figure presented by the system is an **estimate derived from
+corridor capacity and the observed slow-down ratio**, never an observation, and
+is labelled as such. vehicle-like markers rendered on the map are a visual
+representation of corridor flow rate and carry **no association with any real
+vehicle**.
+
+**simulation.** the gps ingest simulator is synthetic. it generates plausible
+origin–destination trips and is retained solely to demonstrate the ingestion
+and normalisation pipeline. simulated data is marked by `traffic_source =
+'fleet'` and is never presented as observed traffic. it is inactive by default.
+
+**no warranty.** this software is provided as-is, without warranty of any kind,
+express or implied. the authors accept no liability for loss arising from its
+use or from reliance on its output.
+
+**attribution.** map data © OpenStreetMap contributors. traffic data © TomTom.

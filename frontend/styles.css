@@ -189,9 +189,26 @@ kbd { font-family: var(--mono); font-size: 11px; background: var(--input); borde
 .vd { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle; }
 .vd.car { background: #0071e3; } .vd.bus { background: #ff9f0a; } .vd.emg { background: #ff453a; }
 .legend.dim { opacity: 0.75; }
-#map { height: 560px; border-radius: 16px; overflow: hidden; background: var(--map-bg); transition: background-color 0.5s; }
-.leaflet-container { font-family: var(--font); background: var(--map-bg); }
-[data-theme="dark"] .leaflet-tile-pane { filter: invert(1) hue-rotate(185deg) brightness(0.92) contrast(0.92); }
+#map .tf-flow { position: absolute; inset: 0; pointer-events: none; z-index: 450; }
+#map { height: 620px; border-radius: 16px; overflow: hidden; background: var(--map-bg);
+  transition: background-color 0.5s, box-shadow 0.3s; position: relative; }
+.leaflet-container { font-family: var(--font); background: var(--map-bg);
+  transition: background-color 0.5s; }
+/* Dark theme: OSM's single light style becomes a proper dark basemap via
+   inversion + hue rotation (no second tile provider, no API key). */
+[data-theme="dark"] .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.88) saturate(0.75);
+}
+[data-theme="dark"] .leaflet-control-zoom a { background: #14161d; color: #f5f5f7; border-color: rgba(255,255,255,.12); }
+[data-theme="dark"] .leaflet-control-attribution { background: rgba(10,11,16,.8) !important; color: #8e8e93 !important; }
+[data-theme="dark"] .leaflet-control-attribution a { color: #a1a1a6 !important; }
+/* Map panels sit on glass so roads/legend stay readable over any basemap. */
+.leaflet-popup-content-wrapper, .leaflet-popup-tip {
+  background: var(--card-solid); color: var(--ink); box-shadow: var(--shadow); }
+.leaflet-tooltip {
+  background: var(--card-solid); color: var(--ink); border: 1px solid var(--line);
+  box-shadow: var(--shadow); border-radius: 9px; font-size: 12px; padding: 6px 9px; }
+.leaflet-tooltip-top::before { border-top-color: var(--card-solid); }
 .route-anim { stroke-dasharray: 14 10; animation: dashmove 1.1s linear infinite; }
 @keyframes dashmove { to { stroke-dashoffset: -24; } }
 
@@ -311,6 +328,58 @@ tbody tr:hover { background: rgba(128, 128, 128, 0.08); }
 .toast[hidden] { display: none; }
 @keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(16px) scale(0.95); } }
 
+/* Analytics — leads the page */
+.tt-badge { font-size: 12px; font-weight: 600; border: 1px solid var(--line); border-radius: 999px;
+  padding: 6px 14px; background: var(--input); color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tt-badge.ok { color: #1a9e40; border-color: rgba(48, 209, 88, 0.45); }
+.tt-badge.warn { color: #b25e00; border-color: rgba(255, 159, 10, 0.5); }
+.tt-badge.off { color: var(--muted); }
+.kpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-bottom: 18px; }
+.kpi { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; background: var(--input); }
+.kpi strong { display: block; font-size: 24px; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.kpi span { font-size: 11.5px; color: var(--muted); }
+.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.chart-card { border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px 10px; background: var(--input); }
+.chart-card h3 { margin: 0 0 8px; font-size: 13px; font-weight: 650; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.07em; }
+.chart-card canvas { width: 100%; height: 220px; display: block; }
+.dense-top { margin-top: 16px; }
+@media (max-width: 900px) { .kpis { grid-template-columns: repeat(3, 1fr); } .charts { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
+
+/* API monitor */
+.mon { margin-top: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--input); }
+.mon summary { cursor: pointer; padding: 11px 16px; font-size: 13px; color: var(--muted); list-style: none; }
+.mon summary::-webkit-details-marker { display: none; }
+.mon summary::before { content: "▸ "; color: var(--accent); }
+.mon[open] summary::before { content: "▾ "; }
+.mon-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 0 14px 14px; }
+.mon-card { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--card-solid); }
+.mon-card.wide { grid-column: 1 / -1; }
+.mon-card h4 { margin: 0 0 8px; font-size: 11.5px; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--muted); font-weight: 650; }
+.mon-kv { display: flex; justify-content: space-between; font-size: 13px; padding: 3px 0;
+  border-bottom: 1px dashed var(--line); }
+.mon-kv:last-child { border-bottom: none; }
+.mon-kv span { color: var(--muted); }
+.mon-kv b { font-variant-numeric: tabular-nums; }
+.budget-bar { height: 7px; border-radius: 999px; background: rgba(128,128,128,.25);
+  overflow: hidden; margin-bottom: 9px; }
+.budget-bar i { display: block; height: 100%; width: 0; border-radius: 999px;
+  background: linear-gradient(90deg, var(--green), #ffd60a 70%, var(--red));
+  transition: width 0.6s ease; }
+@media (max-width: 760px) { .mon-grid { grid-template-columns: 1fr; } }
+
+/* Map layer toggles */
+.layer-toggles { display: flex; gap: 6px; flex-wrap: wrap; }
+.layer-toggles label { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #d5d5da;
+  border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 999px; padding: 5px 12px; cursor: pointer; }
+.layer-toggles input { margin: 0; accent-color: var(--accent); }
+.tt-dot { border: none; }
+.src-tag { font-size: 10px; font-weight: 700; border-radius: 6px; padding: 1px 7px; margin-left: 8px;
+  background: rgba(0, 113, 227, 0.12); color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; }
+.tt-cell { font-variant-numeric: tabular-nums; font-size: 12.5px; color: var(--violet); white-space: nowrap; }
+
 footer { text-align: center; color: var(--muted); font-size: 13px; margin-top: 48px; }
 
 @media (max-width: 760px) {
@@ -326,3 +395,38 @@ footer { text-align: center; color: var(--muted); font-size: 13px; margin-top: 4
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   .reveal { opacity: 1; transform: none; }
 }
+
+.dsec > h4 small { font-weight: 500; opacity: 0.7; text-transform: none;
+  letter-spacing: 0; font-size: 11px; }
+
+/* Source-mix strip: how much of the network is real vendor data. */
+.src-strip { display: flex; gap: 10px; flex-wrap: wrap; margin: -6px 0 18px; }
+.src-pill { font-size: 12.5px; border: 1px solid var(--line); border-radius: 999px;
+  padding: 6px 14px; background: var(--input); color: var(--muted); font-variant-numeric: tabular-nums; }
+.src-pill b { font-weight: 700; }
+.src-pill.tt b { color: var(--violet); }
+.src-pill.fl b { color: var(--accent); }
+.src-pill.demo em { font-style: normal; opacity: 0.65; font-size: 11px; }
+
+/* Map legend — reflects real TomTom data, not the retired fleet categories. */
+.legend .sw.ramp { width: 54px; background: linear-gradient(90deg,#f5455c,#fb923c,#fbbf24,#a3e635,#34d058); }
+.legend .dot-tt { width: 8px; height: 8px; border-radius: 50%; background: var(--violet);
+  box-shadow: 0 0 0 1.5px rgba(255,255,255,.85); display: inline-block; margin-right: 6px; vertical-align: middle; }
+.legend .note { font-size: 11.5px; opacity: 0.7; font-style: italic; }
+
+.flow-note { font-size: 12px; color: var(--muted); margin: 12px 0 0; }
+
+/* Direction-of-flow: dash animation on corridor strokes. The dash period is
+   rewritten per-segment from the real TomTom speed, so a 90 km/h corridor
+   visibly outruns a 30 km/h one. */
+.flowline { stroke-dasharray: 10 14; animation: flowmove 2.2s linear infinite; }
+@keyframes flowmove { to { stroke-dashoffset: -24; } }
+.zoom-hint { position: absolute; left: 12px; bottom: 12px; z-index: 500;
+  font-size: 12px; color: #e5e5ea; background: rgba(10,11,16,.78); border: 1px solid rgba(255,255,255,.12);
+  border-radius: 999px; padding: 7px 14px; backdrop-filter: blur(8px);
+  transition: opacity .3s; pointer-events: none; }
+.zoom-hint.hide { opacity: 0; }
+
+.legend .dot-inc { width: 9px; height: 9px; border-radius: 50%; background: #fb7185;
+  box-shadow: 0 0 0 1.5px #fff; display: inline-block; margin-right: 6px; vertical-align: middle; }
+.legend .dot-inc + b, .legend b { color: var(--ink); font-weight: 700; }

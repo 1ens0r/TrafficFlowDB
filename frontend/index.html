@@ -6,7 +6,7 @@
 <title>TrafficFlowDB — Real-time Traffic Intelligence · India</title>
 <meta name="description" content="Live traffic intelligence across India: real-time GPS ingestion into PostgreSQL, congestion detection and traffic-aware routing — with the database internals streaming live." />
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="/styles.css?v=4" />
 </head>
 <body>
 
@@ -17,10 +17,11 @@
   <div class="nav-inner">
     <a class="brand" href="#top"><span class="dot" id="statusDot"></span>TrafficFlowDB</a>
     <nav>
-      <a href="#sqllab">SQL Lab</a>
+      <a href="#analytics">Analytics</a>
       <a href="#live">Live Map</a>
-      <a href="#underhood">Under the hood</a>
+      <a href="#planner">Routes</a>
       <a href="#network">Network</a>
+      <a href="#sqllab">SQL Lab</a>
     </nav>
     <div class="nav-actions">
       <button class="icon-btn" id="themeBtn" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
@@ -41,38 +42,86 @@
       Watch every query happen below, in real time.
     </p>
     <div class="cta">
-      <a class="btn primary" href="#live">Open live map</a>
-      <a class="btn" href="#sqllab">Query the database</a>
+      <a class="btn primary" href="#analytics">See live analytics</a>
+      <a class="btn" href="#live">Open live map</a>
       <a class="btn github" href="https://github.com/RaghavapriyanSaravanapriyan/TrafficFlowDB" target="_blank" rel="noopener">View on GitHub ↗</a>
     </div>
     <div class="hero-stats">
-      <div><strong id="hsVehicles">–</strong><span>active vehicles</span></div>
-      <div><strong id="hsFixes">–</strong><span>fixes / 5 min</span></div>
-      <div><strong id="hsCongested">–</strong><span>congested roads</span></div>
+      <div><strong id="hsVehicles">–</strong><span>corridors on live data</span></div>
+      <div><strong id="hsFixes">–</strong><span>vendor polls / day</span></div>
+      <div><strong id="hsCongested">–</strong><span>busy + jammed roads</span></div>
       <div><strong id="hsRoutes">–</strong><span>routes computed</span></div>
       <div><strong id="hsQuery">–</strong><span>stats query ms</span></div>
     </div>
   </section>
 
-  <!-- SQL Lab -->
-  <section class="card glass reveal" id="sqllab">
+  <!-- Analytics (leads the page: graphs first) -->
+  <section class="card glass reveal" id="analytics">
     <div class="card-head">
       <div>
-        <h2>SQL Lab</h2>
-        <p>Write real SQL against the live database. Read-only role, 5&nbsp;s statement timeout, <kbd>Ctrl K</kbd> jumps here, <kbd>Ctrl ⏎</kbd> runs.</p>
+        <h2>Live analytics</h2>
+        <p id="anSub">Network performance, computed live from PostgreSQL.</p>
       </div>
+      <span class="tt-badge" id="ttBadge">TomTom: checking…</span>
     </div>
-    <details class="schema" id="schemaBox">
-      <summary>Database structure — <span id="schemaCount">loading…</span></summary>
-      <div class="schema-grid" id="schemaGrid"></div>
+    <div class="kpis">
+      <div class="kpi"><strong id="anSpeed">–</strong><span>network avg km/h</span></div>
+      <div class="kpi"><strong id="anCong">–</strong><span>busy + jammed</span></div>
+      <div class="kpi"><strong id="anJammed">–</strong><span>jammed now</span></div>
+      <div class="kpi"><strong id="anIndex">–</strong><span>avg slow-down index</span></div>
+      <div class="kpi"><strong id="anTT">–</strong><span>corridors on live data</span></div>
+      <div class="kpi"><strong id="anKm">–</strong><span>corridor km tracked</span></div>
+    </div>
+    <div class="src-strip">
+      <span class="src-pill tt"><b id="srcTT">–</b> corridors on real TomTom speeds</span>
+      <span class="src-pill fl"><b id="srcFleet">–</b> corridors on fleet GPS</span>
+      <span class="src-pill demo"><b id="srcFixes">–</b> GPS fixes / 5 min <em>(ingest demo, off)</em></span>
+    </div>
+    <details class="mon" id="monitorBox">
+      <summary>API monitor — <span id="monSub">performance &amp; vendor usage</span></summary>
+      <div class="mon-grid">
+        <div class="mon-card">
+          <h4>Performance</h4>
+          <div class="mon-kv"><span>p50</span><b id="mP50">–</b></div>
+          <div class="mon-kv"><span>p95</span><b id="mP95">–</b></div>
+          <div class="mon-kv"><span>p99</span><b id="mP99">–</b></div>
+          <div class="mon-kv"><span>max</span><b id="mMax">–</b></div>
+          <div class="mon-kv"><span>avg</span><b id="mAvg">–</b></div>
+          <div class="mon-kv"><span>requests</span><b id="mReq">–</b></div>
+          <div class="mon-kv"><span>error rate</span><b id="mErr">–</b></div>
+          <div class="mon-kv"><span>uptime</span><b id="mUp">–</b></div>
+        </div>
+        <div class="mon-card">
+          <h4>TomTom vendor usage</h4>
+          <div class="budget-bar"><i id="monBudgetFill"></i></div>
+          <div class="mon-kv"><span>used / budget</span><b id="mUsed">–</b></div>
+          <div class="mon-kv"><span>projected / day</span><b id="mEst">–</b></div>
+          <div class="mon-kv"><span>fresh readings</span><b id="mFresh">–</b></div>
+          <div class="mon-kv"><span>incidents cached</span><b id="mInc">–</b></div>
+          <div class="mon-kv"><span>last fetch</span><b id="mLast">–</b></div>
+          <div class="mon-kv"><span>poll cadence</span><b id="mCad">–</b></div>
+        </div>
+        <div class="mon-card wide">
+          <h4>Busiest endpoints</h4>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Endpoint</th><th>Calls</th><th>Avg ms</th><th>Errors</th></tr></thead>
+            <tbody id="monBody"></tbody>
+          </table></div>
+        </div>
+      </div>
     </details>
-    <div class="sql-box">
-      <textarea id="sqlInput" rows="6" spellcheck="false"
-        placeholder="SELECT * FROM live_traffic_summary LIMIT 5;"></textarea>
-      <button class="btn primary" id="sqlRun">Run query</button>
+    <div class="charts">
+      <div class="chart-card"><h3>Live TomTom speed trend</h3><canvas id="chSpeed" height="220"></canvas></div>
+      <div class="chart-card"><h3>Congestion split</h3><canvas id="chSplit" height="220"></canvas></div>
+      <div class="chart-card"><h3>Slowest corridors right now</h3><canvas id="chSlow" height="220"></canvas></div>
+      <div class="chart-card"><h3>Corridors covered per poll</h3><canvas id="chIngest" height="220"></canvas></div>
     </div>
-    <div class="chips" id="sqlChips"></div>
-    <div id="sqlOut" class="cmd-out" hidden></div>
+    <div class="table-wrap dense-top">
+      <table>
+        <thead><tr><th>Densest corridors</th><th>Avg km/h</th><th>Vehicles</th><th>Density</th><th>State</th><th>TomTom</th></tr></thead>
+        <tbody id="anDense"></tbody>
+      </table>
+    </div>
   </section>
 
   <!-- Live map -->
@@ -80,52 +129,29 @@
     <div class="card-head">
       <div>
         <h2>Live map</h2>
-        <p>26 national hubs · 33 live corridors. Roads glow with real congestion; dots are vehicles, right now.</p>
+        <p id="mapSub">Loading corridors…</p>
       </div>
       <div class="map-tools">
+        <div class="layer-toggles" id="layerToggles">
+          <label><input type="checkbox" id="lyrSeg" checked /> Corridors</label>
+          <label><input type="checkbox" id="lyrVeh" checked /> Traffic flow</label>
+          <label><input type="checkbox" id="lyrHub" checked /> Hubs</label>
+          <label><input type="checkbox" id="lyrTT" checked /> TomTom</label>
+          <label><input type="checkbox" id="lyrInc" checked /> Incidents</label>
+        </div>
         <div class="legend">
-          <span><i class="sw low"></i>Free</span>
-          <span><i class="sw med"></i>Busy</span>
-          <span><i class="sw high"></i>Jammed</span>
+          <span><i class="sw ramp"></i>slow → free</span>
+          <span><i class="dot-tt"></i>TomTom reading</span>
+          <span><i class="dot-inc"></i>Live incident <b id="incCount">0</b></span>
           <span><i class="sw route"></i>Your route</span>
         </div>
         <div class="legend dim">
-          <span><i class="vd car"></i>Cars</span>
-          <span><i class="vd bus"></i>Buses</span>
-          <span><i class="vd emg"></i>Emergency</span>
+          <span><i class="note">colour = speed vs limit · dots along a road = live traffic load</i></span>
         </div>
       </div>
     </div>
-    <div id="map"></div>
-  </section>
-
-  <!-- Under the hood -->
-  <section class="card dark glass reveal" id="underhood">
-    <div class="card-head">
-      <div>
-        <h2>Under the hood</h2>
-        <p>Every query the backend runs against PostgreSQL, streaming live. This is the database thinking.</p>
-      </div>
-      <div class="term-tools">
-        <div class="term-filters" id="logFilters">
-          <button data-f="ALL" class="active">All</button>
-          <button data-f="SQL">SQL</button>
-          <button data-f="ROUTE">Routes</button>
-          <button data-f="FLEET">Fleet</button>
-          <button data-f="SCENARIO">Scenarios</button>
-          <button data-f="CMD">Console</button>
-        </div>
-        <button class="mini-btn" id="logPause">Pause</button>
-        <button class="mini-btn" id="logClear">Clear</button>
-      </div>
-    </div>
-    <div class="term-stats">
-      <span><b id="lgCount">0</b> queries logged</span>
-      <span>avg <b id="lgAvg">0 ms</b></span>
-      <span>dijkstra <b id="lgRoute">0 ms</b></span>
-      <span class="term-ok">● connected</span>
-    </div>
-    <div id="terminal" class="terminal" aria-live="off"></div>
+    <div id="map"><div class="zoom-hint" id="zoomHint">Zoom in to see vehicles move at their real speed →</div></div>
+    <p class="flow-note">Dots are vehicles moving at the <b>real speed TomTom reports</b> for that corridor; how many you see comes from the live slow-down index. TomTom publishes segment speeds — not individual vehicle GPS — so positions are interpolated along the corridor.</p>
   </section>
 
   <!-- Route planner -->
@@ -155,10 +181,60 @@
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Segment</th><th>Scope</th><th>km</th><th>Avg km/h</th><th>Vehicles</th><th>Density</th><th>State</th></tr></thead>
+        <thead><tr><th>Segment</th><th>Scope</th><th>km</th><th>Avg km/h</th><th>Vehicles</th><th>Density</th><th>State</th><th>TomTom</th></tr></thead>
         <tbody id="netBody"></tbody>
       </table>
     </div>
+  </section>
+
+  <!-- SQL Lab -->
+  <section class="card glass reveal" id="sqllab">
+    <div class="card-head">
+      <div>
+        <h2>SQL Lab</h2>
+        <p>Write real SQL against the live database. Read-only role, 5&nbsp;s statement timeout, <kbd>Ctrl K</kbd> jumps here, <kbd>Ctrl ⏎</kbd> runs.</p>
+      </div>
+    </div>
+    <details class="schema" id="schemaBox">
+      <summary>Database structure — <span id="schemaCount">loading…</span></summary>
+      <div class="schema-grid" id="schemaGrid"></div>
+    </details>
+    <div class="sql-box">
+      <textarea id="sqlInput" rows="6" spellcheck="false"
+        placeholder="SELECT * FROM live_traffic_summary LIMIT 5;"></textarea>
+      <button class="btn primary" id="sqlRun">Run query</button>
+    </div>
+    <div class="chips" id="sqlChips"></div>
+    <div id="sqlOut" class="cmd-out" hidden></div>
+  </section>
+
+  <!-- Under the hood -->
+  <section class="card dark glass reveal" id="underhood">
+    <div class="card-head">
+      <div>
+        <h2>Under the hood</h2>
+        <p>Every query the backend runs against PostgreSQL, streaming live. This is the database thinking.</p>
+      </div>
+      <div class="term-tools">
+        <div class="term-filters" id="logFilters">
+          <button data-f="ALL" class="active">All</button>
+          <button data-f="SQL">SQL</button>
+          <button data-f="ROUTE">Routes</button>
+          <button data-f="FLEET">Fleet</button>
+          <button data-f="SCENARIO">Scenarios</button>
+          <button data-f="CMD">Console</button>
+        </div>
+        <button class="mini-btn" id="logPause">Pause</button>
+        <button class="mini-btn" id="logClear">Clear</button>
+      </div>
+    </div>
+    <div class="term-stats">
+      <span><b id="lgCount">0</b> queries logged</span>
+      <span>avg <b id="lgAvg">0 ms</b></span>
+      <span>dijkstra <b id="lgRoute">0 ms</b></span>
+      <span class="term-ok">● connected</span>
+    </div>
+    <div id="terminal" class="terminal" aria-live="off"></div>
   </section>
 
   <footer>
@@ -199,14 +275,41 @@
   </div>
 
   <div class="dsec">
-    <h4>Vehicle fleet (built in)</h4>
-    <label class="switch-row"><input type="checkbox" id="fleetOn" /><span>Run server-side fleet</span><b id="fleetLive"></b></label>
+    <h4>GPS ingest simulator <small>(optional)</small></h4>
+    <label class="switch-row"><input type="checkbox" id="fleetOn" /><span>Run synthetic fleet</span><b id="fleetLive"></b></label>
     <div class="field">
       <div class="flabel"><span>Vehicles</span><b id="fleetVal">0</b></div>
       <input type="range" id="fleetRange" min="0" max="500" step="10" value="0" />
     </div>
     <button class="btn primary block" id="fleetApply">Apply fleet</button>
-    <p class="drawer-note" id="fleetNote">Spawns/retires live to the target — OD trips through the bulk ingest path. No terminal process needed.</p>
+    <p class="drawer-note" id="fleetNote">Off by default — the map runs on <b>real TomTom speeds</b>. Turn this on only to demo the raw GPS ingest path (OD trips → <code>gps_data</code> → analyzer).</p>
+  </div>
+
+  <div class="dsec">
+    <h4>Real-time TomTom <small>(primary source)</small></h4>
+    <p class="drawer-note" id="ttStatus">Checking vendor status…</p>
+    <label class="switch-row"><input type="checkbox" id="ttOn" /><span>Poll TomTom vendor speeds</span><b id="ttLive"></b></label>
+    <div class="field">
+      <div class="flabel"><span>Poll every</span><b id="ttIntVal">300 s</b></div>
+      <input type="range" id="ttInt" min="60" max="1800" step="60" value="300" />
+    </div>
+    <div class="field">
+      <div class="flabel"><span>Segments per cycle</span><b id="ttBatchVal">4</b></div>
+      <input type="range" id="ttBatch" min="1" max="12" step="1" value="4" />
+    </div>
+    <div class="field">
+      <div class="flabel"><span>Daily budget (calls)</span></div>
+      <input type="number" id="ttBudget" value="2000" min="0" max="50000" step="100" />
+    </div>
+    <div class="split">
+      <div class="field"><div class="flabel"><span>&nbsp;</span></div><button class="btn block primary" id="ttApply">Apply</button></div>
+      <div class="field"><div class="flabel"><span>&nbsp;</span></div><button class="btn block" id="ttNow">Refresh now</button></div>
+    </div>
+    <div class="split">
+      <div class="field"><div class="flabel"><span>&nbsp;</span></div><button class="btn block" id="ttInc">Incidents</button></div>
+      <div class="field"><div class="flabel"><span>&nbsp;</span></div><button class="btn block" id="ttOpen">Docs</button></div>
+    </div>
+    <p class="drawer-note">Round-robin, budget-capped: each cycle touches a few corridors, so the free tier (≈2,500/day) never burns. Fresh vendor speeds (≤15 min) override fleet averages in routing.</p>
   </div>
 
   <div class="dsec">
@@ -230,6 +333,6 @@
 <div class="toast" id="toast" hidden></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="app.js"></script>
+<script src="/app.js?v=4"></script>
 </body>
 </html>

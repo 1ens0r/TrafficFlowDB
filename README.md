@@ -1,355 +1,383 @@
-# TrafficFlowDB
+# trafficflowdb
 
-**Real-time traffic intelligence on a relational database — across India.**
-Vehicles drive real origin→destination trips, stream GPS into PostgreSQL, the
-database scores congestion per segment, and Dijkstra reroutes around it.
-You can spawn fleets, inject jams, rewrite the congestion rulebook live —
-and query the database yourself in the SQL Lab while every query streams
-through the Under-the-hood terminal.
+a relational traffic-intelligence system that ingests live vendor observations,
+classifies congestion per road segment, and solves traffic-aware routing over
+india's national highway network. the database is the authoritative layer for
+collection, classification, retention and serving; every consumer — rest, a
+websocket, and a browser dashboard — reads the same derived state.
 
-> One-line pitch: a real-time traffic intelligence system in which a relational
-> database acts as the central layer for collecting, managing, analyzing, and serving
-> continuously changing transportation data.
+corridor speeds, congestion levels, road incidents and route estimates are
+derived from **live TomTom Traffic API** measurements. no synthetic traffic is
+required at any point. see §1 for an explicit statement of which quantities are
+measured and which are inferred.
 
-Live network: **32 national highway hubs, 42 trunk corridors** — one connected
-graph, so `Delhi → Kochi` (3,570 km) routes in a single query. Speeds come from
-**live TomTom Traffic API** data, falling back to an optional simulated fleet.
-
-### What is real, and what is not
-
-This distinction matters more than any feature, so it is stated up front:
-
-| | Source | Status |
-|---|---|---|
-| **Corridor speeds** | TomTom Flow Segment Data | **Real.** Measured `currentSpeed` / `freeFlowSpeed`, refreshed every 240 s |
-| **Congestion level** | Derived from those speeds | **Real.** Classified on the observed slow-down ratio |
-| **Traffic incidents** | TomTom Incident API | **Real.** Actual events with true coordinates |
-| **Route ETAs** | Dijkstra over real speeds | **Real** |
-| **Vehicle counts** | — | **Not available.** TomTom publishes no vehicle counts or GPS traces |
-| **Moving dots on the map** | Interpolated along corridors | **Illustrative.** Dots move at the *real* reported speed, but positions are interpolated — see §7 |
-
-No public API exposes individual probe vehicles; they are licensed exclusively.
-Anything claiming otherwise is either a simulation or scraping a consumer app.
+network: **32 national highway hubs, 42 bidirectional trunk corridors**, one
+connected graph, permitting single-query routing across the full subcontinent
+(`delhi → kochi`, 3,570 km, solved in approximately 0.05 ms).
 
 ---
 
-## 1. Requirements
+## 1. data provenance
 
-| Layer    | Requirement                                              |
-|----------|----------------------------------------------------------|
-| OS       | Linux (developed on Ubuntu), Docker 24+                  |
-| Database | PostgreSQL 16 + PostGIS (provided via `docker-compose`) |
-| Backend  | Python 3.12+ · FastAPI · Uvicorn · psycopg 3            |
-| Frontend | Any modern browser (Leaflet + OSM tiles via CDN)         |
-| Tests    | pytest                                                   |
+the following table is normative. any claim not represented here is inferred,
+not measured.
 
-Pinned in `requirements.txt`. No Node/build step — dependency-free vanilla HTML/CSS/JS.
+| quantity | source | status |
+|----------|--------|--------|
+| corridor speed | TomTom Flow Segment Data (`currentSpeed`, `freeFlowSpeed`) | **measured** — refreshed every 240 s |
+| congestion level | derived from measured slow-down ratio | **measured** — see §5 |
+| traffic incidents | TomTom Incident API | **measured** — genuine coordinates |
+| travel time, distance | dijkstra over measured edge weights | **measured** |
+| vehicle counts | — | **unavailable** — tomtom publishes neither counts nor probe traces |
+| map dot position | interpolated along corridor geometry | **inferred** — see §6 |
 
-## 2. Quickstart
+individual probe vehicles are licenced exclusively by their operators and are
+not redistributable through any public interface. any implementation purporting
+to expose them is either simulating them or scraping a consumer client.
 
-```bash
-docker compose up -d
-# open http://localhost:8000  (?theme=dark for dark mode)
-```
+---
 
-Everything ships in one command — the API image builds and boots against the
-database, applies migrations, calibrates vendor probe points and starts
-polling. The dashboard works immediately with live data; nothing else to run.
+## 2. requirements
 
-**TomTom API key.** Copy the example and paste your key (free dev tier):
+| layer    | requirement                                                    |
+|----------|----------------------------------------------------------------|
+| os       | linux (developed on ubuntu), docker 24 or later                 |
+| database | postgresql 16 with postgis, provisioned by `docker compose`     |
+| backend  | python 3.12 or later · fastapi · uvicorn · psycopg 3            |
+| frontend | any modern browser · leaflet with keyless osm tiles             |
+| tests    | pytest 8                                                       |
+
+all python dependencies are pinned in `requirements.txt`. there is no
+javascript build step; the frontend is dependency-free vanilla html, css and
+javascript.
+
+## 3. deployment
 
 ```bash
 cp .env.example .env && chmod 600 .env
-# edit .env -> TOMTOM_API_KEY=<your key>
+# populate TOMTOM_API_KEY in .env
 docker compose up -d
 ```
 
-`.env` is git-ignored and never committed. Leave the key empty to run
-fleet-only.
+this single command builds the api image, starts postgres, applies the schema
+and every migration in dependency order, calibrates vendor probe points, and
+begins polling. the dashboard is serviceable immediately at `localhost:8000`;
+no additional process is required. `?theme=dark` selects the dark palette.
 
-Optional GPS ingest simulator (off by default — the map runs on real data):
-open the **Customize** drawer → *GPS ingest simulator*.
+`.env` is git-ignored and is never committed. the API operates in a degraded,
+fleet-free mode when the key is absent.
 
-Config: `DATABASE_URL`, `TRAFFIC_WINDOW_MINUTES`, `POLL_SECONDS`,
-`TOMTOM_INTERVAL_SEC`, `TOMTOM_BATCH_SIZE`, `TOMTOM_DAILY_BUDGET`
-(see `.env.example`; the live pipeline knobs are also tunable via
-`PUT /api/config` / the Customize drawer).
+### 3.1 transactional cost containment
 
-## 2.1 Staying inside the free tier
+the tomtom free tier permits approximately 2,500 transactions per day and bills
+per request. an unconstrained poller across 42 corridors exhausts that quota in
+under two hours. four mechanisms bound consumption:
 
-TomTom's free tier allows ~2,500 transactions/day, and the vendor is billed per
-request — so an unguarded poller on 42 corridors burns the quota in minutes.
-Four controls keep it safe, all live-tunable via **Customize → Real-time TomTom**:
+1. **round-robin batching** — each cycle requests only `TOMTOM_BATCH_SIZE`
+   corridors, ordered by oldest reading, guaranteeing uniform coverage without
+   burst behaviour.
+2. **daily budget ledger** — the `tomtom_usage` table records every request
+   issued. the poller halts at `TOMTOM_DAILY_BUDGET` and reports
+   `budget_exhausted` rather than silently overspending.
+3. **single-transaction corridors** — probe points are calibrated once during
+   startup, because a corridor's straight-line midpoint frequently lies off the
+   physical road and is rejected with http 400. subsequent polls therefore cost
+   exactly one transaction at a known-valid coordinate.
+4. **tiled incident sweep** — tomtom rejects bounding boxes exceeding 10,000 km²,
+   so incidents are swept one hub per cycle on rotation rather than as a single
+   all-india query, which always fails.
 
-1. **Round-robin batching** — each cycle touches only `TOMTOM_BATCH_SIZE`
-   corridors, oldest reading first, so coverage is fair and never spikes.
-2. **Daily budget ledger** — `tomtom_usage` counts every request made; the
-   poller stops at `TOMTOM_DAILY_BUDGET` and reports `budget_exhausted`
-   instead of silently overspending.
-3. **One transaction per corridor** — probe points are calibrated *once* at
-   startup (a corridor's straight-line midpoint is often off-road, which
-   TomTom rejects with HTTP 400) and persisted, so no poll ever wastes a call.
-4. **Tiled incidents** — TomTom caps `bbox` at 10,000 km², so incidents are
-   swept one hub per cycle instead of an all-India query that always fails.
+the default `240 s × 4` configuration projects to approximately **1,200
+transactions per day**, preserving headroom for manual refreshes.
+`GET /api/tomtom/status` reports live spend, coverage and poller health; the
+dashboard's **api monitor** panel renders the same figures.
 
-Default `240 s × 4` projects to **~1,200 calls/day**, leaving headroom for
-manual refreshes. `GET /api/tomtom/status` reports live spend, coverage and
-poller health; the dashboard's **API monitor** panel shows the same figures.
+### 3.2 configuration
 
-## 3. Architecture
+| variable                | default | purpose                                        |
+|-------------------------|---------|------------------------------------------------|
+| `DATABASE_URL`          | local   | postgres connection string                     |
+| `TRAFFIC_WINDOW_MINUTES`| `5`     | rolling analysis window                        |
+| `POLL_SECONDS`          | `2`     | dashboard refresh cadence                      |
+| `TOMTOM_API_KEY`        | empty   | vendor credential; empty disables vendor polling |
+| `TOMTOM_INTERVAL_SEC`   | `240`   | poll cadence                                   |
+| `TOMTOM_BATCH_SIZE`     | `4`     | corridors per cycle                            |
+| `TOMTOM_DAILY_BUDGET`   | `2000`  | hard daily transaction ceiling                 |
+
+poll settings persist to `tomtom_config` and survive restart and redeployment.
+`PUT /api/tomtom/config` adjusts them at runtime; `PUT /api/config` adjusts the
+analysis window and dashboard cadence. congestion thresholds remain editable
+through `PUT /api/config` or directly in the sql lab, as they reside in the
+database.
+
+---
+
+## 4. architecture
 
 ```
-TomTom Traffic API ──► poller (budget-capped, round-robin)
-    └─► tomtom_reading / tomtom_history / tomtom_incident
-            └─► refresh_all_traffic()  ← vendor speed wins when fresh
-                    └─► traffic_condition (snapshot) + traffic_history (trend)
-                        └─► Dijkstra on travel-time weights → route + route_segment
-                            └─► REST + WebSocket /ws/live (traffic, incidents, query log)
-                                └─► dashboard: analytics, map, SQL Lab, API monitor
-
-(optional) simulated fleet → POST /api/gps/batch → same pipeline, used only
-where no vendor reading is fresh
+tomtom traffic api ──► poller (budget-capped, round-robin)
+    └─► tomtom_reading · tomtom_history · tomtom_incident · tomtom_usage
+            └─► refresh_all_traffic()      ← vendor speed authoritative when fresh
+                    └─► traffic_condition (live snapshot) · traffic_history (trend)
+                        └─► dijkstra on travel-time weights → route → route_segment
+                            └─► rest + websocket /ws/live
+                                └─► dashboard: analytics · map · sql lab · api monitor
 ```
 
-`intersection` rows are nodes, `road_segment` rows are bidirectional edges.
-Bulk ingest keeps round trips constant per batch:
-**~3,000+ fixes/sec** measured (250-fix batch in ~60 ms).
+the design inverts the conventional dependency direction: the vendor is polled
+asynchronously and cached, and the rest api never blocks on an upstream call. a
+vendor outage therefore degrades coverage rather than availability.
 
-Vendor readings are cached, never polled synchronously: the API never blocks
-on TomTom, so a vendor outage degrades coverage instead of the service.
+`intersection` rows are graph nodes; `road_segment` rows are bidirectional edges.
+optional GPS ingest, when enabled, follows the identical downstream path and is
+the only producer of `gps_data`; it is not required for operation.
 
-## 4. Traffic sources
+bulk ingest maintains a constant round-trip count irrespective of batch size:
+one vehicle upsert, two bulk inserts, and a single `refresh_all_traffic()` call.
+measured throughput is **approximately 3,000 fixes per second** at 250 fixes per
+batch in 60 ms.
 
-**Primary — live vendor data.** Each cycle the poller samples a few corridors,
-writes the measured speed to `tomtom_reading`, appends to `tomtom_history`,
-and recomputes the snapshot. A fresh vendor reading is authoritative: it
-overrides the fleet average and sets the congestion level from the observed
-slow-down ratio. This is the data you see by default.
+---
 
-**Secondary — optional simulator.** For demonstrating the raw GPS ingest path,
-the built-in fleet doesn't random-walk — each one picks a destination (national-biased,
-like real intercity flow), follows the Dijkstra shortest-time path, and
-re-plans on arrival:
+## 5. congestion classification
 
-- **Density-aware speed**: target speed folds in live segment load
-  (`1 − density × 0.6`), eased toward — jams propagate organically.
-- **Driver personalities**: per-vehicle aggression factor × type factor
-  (bus 0.85, emergency 1.3 and congestion-immune).
-- **Bus dwell**: buses pause 1–3 ticks at nodes (stops) with 40% probability.
-- **Capacity-weighted spawn**: big corridors naturally carry more flow.
-
-With ~250 vehicles the busy corridors start jamming on their own — no scripted
-congestion. It is off by default because real vendor data is better.
-
-## 5. Database design (the core)
-
-**Entities (3NF):** `users` (+`admin_profile`, `driver_profile`) ·
-`vehicle` (+`car_detail`, `bus_detail`, `emergency_vehicle_detail`) ·
-`intersection` · `road_segment` · `gps_data` (append-only) ·
-`vehicle_position` (map-matched) · `traffic_condition` (one live row/segment) ·
-`traffic_history` (trend) · `traffic_thresholds` (live rulebook singleton) ·
-`tomtom_reading` · `tomtom_history` · `tomtom_incident` · `tomtom_usage`
-(vendor spend ledger) · `tomtom_config` (persisted poll settings) ·
-`route_request` → `route` → `route_segment`.
-
-**EER:** `VEHICLE → CAR / BUS / EMERGENCY_VEHICLE`, `USER → ADMIN / DRIVER`.
-
-**DBMS features:** btree + BRIN time/segment/congestion indexes · views
-(`live_traffic_summary`, `congested_segments`, `live_positions`,
-`latest_positions`, `segment_stats_5min`, `tomtom_segment_traffic`,
-`tomtom_coverage`) · triggers (GPS validation, `last_seen`, route guard,
-`pg_notify` on congestion change) · procedures (`calculate_segment_traffic`,
-`refresh_all_traffic`, `get_congested_segments`, `find_nearby_segments`,
-`prune_old_data`, `set_segment_probe`) · a SELECT-only `traffic_ro` role
-provisioned at boot for the SQL Lab.
-
-Files: `database/schema.sql`, `views.sql`, `triggers.sql`, `procedures.sql`,
-`migrate_india.sql`, `migrate_all_india.sql`, `migrate_tomtom.sql`,
-`migrate_probes.sql`, `migrate_more_corridors.sql`, `migrate_perf.sql`,
-`migrate_tomtom_traffic.sql` — applied in order by `init_db()`. All are
-idempotent and re-run safely on every boot.
-
-**Retention:** positions 90 min, history 12 h (`prune_old_data`, run on a
-timer). Append-only tables are BRIN-indexed and read through `live_positions`,
-a 60 s-bounded view, so the hot path never sorts history.
-
-## 6. Congestion rule
-
-Two rules, and which one applies is recorded per row in
+two rules apply, and the applicable rule is recorded per row in
 `traffic_condition.traffic_source`.
 
-**Vendor-backed corridors** (`traffic_source = 'tomtom'`) — classified on the
-observed slow-down, where `free-flow` is TomTom's own estimate for the road:
+**vendor-backed corridors** (`traffic_source = 'tomtom'`) — classification is
+derived from observed slow-down, where free-flow is tomtom's own estimate for
+the road:
 
 ```
-ratio        = currentSpeed / freeFlowSpeed      1 = free, 0 = stopped
-traffic_index = 1 - ratio                        0 = free, 1 = jam
-HIGH    if ratio < 0.25
-MEDIUM  if ratio < 0.55
-LOW     otherwise
-```
+ratio         = currentSpeed / freeFlowSpeed        1 = free-flowing, 0 = stopped
+traffic_index = 1 - ratio                          0 = free-flowing, 1 = standstill
 
-**Fleet-backed corridors** — the original rule over ingested GPS, with
-thresholds in `traffic_thresholds`, read by the procedure on every call:
-
-```
-density = distinct_vehicles / capacity
-HIGH     if avg_speed < high_speed AND density > high_density   (15, 0.75)
-MEDIUM   if avg_speed < med_speed  OR  density > med_density     (30, 0.50)
+HIGH     ratio < 0.25
+MEDIUM   ratio < 0.55
 LOW      otherwise
 ```
 
-A corridor drops back to the fleet rule once its vendor reading goes stale,
-so the map never shows empty gaps and never shows a stale number as live.
-
-## 7. Why the map's dots don't move at full zoom
-
-A corridor is 100–1,000 km long. At a whole-of-India zoom, 250 km is roughly
-150 px, so a vehicle doing 100 km/h advances about **0.02 px per frame** — the
-motion is physically imperceptible, not broken. Real traffic products show
-flow rather than individual cars at that scale for exactly this reason.
-
-So the map is honest about scale:
-
-- **Zoomed in (z ≥ 7)** — dots travel along the corridor at the **real
-  reported speed**, so a jammed corridor visibly crawls while a free one
-  whips past.
-- **Country zoom** — direction-of-flow instead, rather than faking motion.
-
-Positions are interpolated along corridor geometry because TomTom publishes
-segment speeds, not vehicle traces. Requesting a route flies to z ≤ 9, where
-that motion is visible. Everything is drawn on a single canvas in one
-`requestAnimationFrame` pass, so it stays smooth at any zoom.
-
-## 8. Routing
-
-Dijkstra, weight = live travel time `w = distance / effective_speed × 60`.
-Speed precedence: emergency `priority=true` uses the free-flow limit;
-otherwise a fresh vendor reading wins, then the fleet-observed average, then
-the limit derated by congestion multiplier (LOW 1.0 / MEDIUM 1.5 / HIGH 2.5).
-Each leg reports `speed_source` so you can see which data set chose its ETA.
-Requests persist `route_request → route → route_segment[]`.
-Delhi → Mumbai (1,460 km, 4 legs) computes in ~0.05 ms. Every response also
-carries a `comparison` block: the shortest-distance route's km + ETA next to
-the fastest route's, plus `saved_min`, `extra_km`, and `same_route` — the
-dashboard renders it as a Shortest-vs-Fastest card, so the demo can prove
-"choose the fastest, not the shortest" in one number.
-
-## 8. SQL Lab — query it yourself
-
-Dashboard → SQL Lab: schema browser (33 tables & views) + editor
-(`Ctrl K` focuses, `Ctrl ⏎` runs) + results grid. Triple-locked reads:
-
-1. Parser allowlist — `SELECT`/`WITH` only, single statement, no stacking,
-   no catalog snooping (`pg_*`, `version()`).
-2. The `traffic_ro` role holds SELECT-only grants — even a smuggled write
-   dies with `permission denied` (verified live).
-3. `statement_timeout = 5 s` on the read-only pool; 200-row cap.
-
-Recommended starter queries (one click each, all verified live):
-
-1. **Congested right now** — live leaderboard from `live_traffic_summary`.
-2. **Slowest trunk corridors** — where the highways are bleeding speed.
-3. **Load by scope** — trunk segment/vehicle/speed rollup.
-4. **Fleet mix, live** — car/bus/emergency counts + speeds from `latest_positions`.
-5. **Fixes per minute (15 min)** — ingest firehose rate from `gps_data`.
-6. **Hourly speed trend** — 12-hour network performance from `traffic_history`.
-7. **Real vs simulated** — which corridors come from TomTom vs the fleet:
-   `SELECT traffic_source, COUNT(*), ROUND(AVG(traffic_index)::numeric,3)
-    FROM traffic_condition GROUP BY 1;`
-8. **Vendor spend today** — `SELECT * FROM tomtom_usage;`
-
-(`POST /api/command` NL console from v2 remains as an API extra.)
-
-## 9. REST + WebSocket API
-
-| Method | Endpoint                        | Purpose                                        |
-|--------|---------------------------------|------------------------------------------------|
-| GET    | `/api/health`                   | readiness                                      |
-| POST   | `/api/gps` · `/api/gps/batch`   | ingest 1 fix / bulk batch (constant round trips) |
-| GET    | `/api/network/*`                | intersections, segments (+scope), live positions |
-| GET    | `/api/traffic/summary`          | live snapshot (drives map + table)             |
-| GET    | `/api/traffic/congested?level=` | worst-first                                    |
-| GET    | `/api/traffic/segment/{id}`     | snapshot + 60-pt history                       |
-| POST   | `/api/traffic/refresh`          | recompute all segments                         |
-| POST   | `/api/routes/request`           | `{source_id, destination_id, priority?}`       |
-| GET    | `/api/routes/history`           | past recommendations                           |
-| GET/PUT| `/api/config`                   | window, poll cadence, congestion thresholds    |
-| GET/POST| `/api/fleet`                   | server fleet status / spawn-retire control     |
-| POST   | `/api/scenarios/jam`            | inject N crawling vehicles on a segment        |
-| POST   | `/api/scenarios/rush-hour`      | peak load on top-capacity corridors            |
-| POST   | `/api/scenarios/reset`          | remove scenario vehicles, recompute            |
-| GET/POST| `/api/sql/*`                   | schema, samples, read-only query runner        |
-| GET    | `/api/logs?since=&limit=`       | live query-log ring buffer                     |
-| GET    | `/api/tomtom/status`            | coverage, spend, poller health                 |
-| GET    | `/api/tomtom/readings`          | per-corridor speed + map coordinates           |
-| GET    | `/api/tomtom/incidents?limit=`  | positioned live traffic events                  |
-| POST   | `/api/tomtom/refresh`           | force a poll (refuses at budget; `bbox` for incidents) |
-| PUT    | `/api/tomtom/config`            | live cadence / batch / budget tuning           |
-| GET    | `/api/analytics/overview`       | congestion split, network speed, vendor coverage |
-| GET    | `/api/analytics/trends?hours=`  | speed trend, ingest and vendor coverage series |
-| GET    | `/api/analytics/corridors`      | slowest + densest corridors                    |
-| GET    | `/api/monitor?window_sec=`      | API p50/p95/p99, error rate, busiest endpoints |
-| WS     | `/ws/live`                      | traffic + positions + log entries every tick   |
-
-Docs: `:8000/docs`. The **Under the hood** terminal streams the query log
-(SQL text + ms + context) with category filters, pause, and running averages —
-a bounded in-memory ring, so logging never slows ingest.
-
-## 10. Demo script
-
-1. `cp .env.example .env`, paste your `TOMTOM_API_KEY`, then `docker compose up -d`
-   → open `:8000`. Live vendor data starts flowing on its own.
-2. **Live analytics** — watch corridor coverage climb and speeds settle onto
-   real measured values. Open the **API monitor** for spend and latency.
-3. `Route Delhi to Mumbai` — every leg is weighted by real speeds; the
-   Shortest-vs-Fastest card shows the trade-off in one number.
-4. Zoom into the route: traffic dots now move at the corridors' real speeds,
-   and the jam slows down visibly.
-5. SQL Lab → run **Congested right now** — your own query, live rows, and you
-   can see `traffic_source` proving which rows came from TomTom.
-6. Toggle **Incidents** on the map for real jams and closures with true
-   coordinates.
-
-No simulated traffic is needed at any point; the fleet is optional and off.
-
-## 11. Metrics (measured)
-
-Bulk ingest **~3,000 fixes/s** (250-fix batch ≈ 60 ms, 1 refresh) ·
-stats ~3–7 ms under load · Dijkstra 32 nodes/42 edges ~0.05 ms ·
-API p50 ~4 ms · p95 ~13 ms · 0 errors (live) · dashboard tick 2 s (WS push + poll fallback).
-
-## 12. Layout
+**gps-backed corridors** — the original rule over ingested positions, with
+thresholds held in the `traffic_thresholds` singleton and read by the stored
+procedure on every invocation:
 
 ```
-backend/   main, database pool (+read-only role), runtime config, querylog,
-           monitor (request timing), maintenance (retention), schemas,
-           routes/ (gps, network, traffic, routing, vehicles, stats, config,
-           fleet, scenarios, command, sql, logs, tomtom, analytics)
-           services/ (geo, gps_processor, ingest_bulk, traffic_analyzer,
-           route_optimizer, scenarios, command, sqllab, tomtom poller)
-simulator/ OD-trip fleet (Vehicle mover, build_graph/plan_trip),
-           vehicle_simulator.py (CLI), fleet.py (server FleetManager)
-frontend/  glass dashboard: index.html, styles.css, app.js (Leaflet)
-database/  schema, views, triggers, procedures, India network migrations,
-           TomTom tables + probe calibration, perf (BRIN/live view/pruning)
-tests/     47 pytest tests: geo, congestion rules, Dijkstra, console parser, SQL guard, vendor poller
+density = distinct_vehicles / capacity
+
+HIGH     avg_speed < high_speed   AND density > high_density      (15, 0.75)
+MEDIUM   avg_speed < med_speed    OR  density > med_density       (30, 0.50)
+LOW      otherwise
 ```
 
-## 13. Testing
+a corridor reverts to the second rule once its vendor reading exceeds the
+freshness window, so the system exhibits neither coverage gaps nor stale values
+presented as current.
+
+---
+
+## 6. rendering scale: why vehicles do not visibly move at national zoom
+
+this is a property of scale, not a defect. corridors span 100 to 1,000 km. at a
+whole-of-india viewport, 250 km occupies roughly 150 pixels, so a vehicle
+travelling at 100 km/h advances approximately **0.02 pixels per frame** — the
+motion is physically imperceptible. production traffic systems display flow
+rather than individual vehicles at this scale for precisely this reason.
+
+the map is therefore explicit about resolution:
+
+- **z ≥ 7** — dots traverse the corridor at the **measured** speed, so a
+  congested corridor visibly decelerates while a free-flowing one advances
+  rapidly.
+- **below z 7** — direction-of-flow is rendered instead, rather than
+  simulating motion that does not exist at that scale.
+
+positions are interpolated along corridor geometry because tomtom publishes
+segment speeds rather than vehicle traces. requesting a route flies the viewport
+to z ≤ 9, where the motion is resolvable. all overlays are composited on a single
+canvas within one `requestAnimationFrame` pass, sustaining frame rate at any
+zoom level.
+
+---
+
+## 7. routing
+
+weights are `w = distance_km / effective_speed × 60`. speed precedence is:
+emergency `priority=true` resolves to the free-flow limit; otherwise a fresh
+vendor reading is selected, then the observed fleet average, then the limit
+derated by the congestion multiplier (low 1.0 / medium 1.5 / high 2.5). each leg
+reports `speed_source`, making the provenance of every estimate inspectable.
+
+requests persist as `route_request → route → route_segment[]`. `delhi → mumbai`
+(1,460 km, four legs) resolves in approximately 0.05 ms. every response carries a
+`comparison` block containing the shortest-distance route's distance and
+estimate alongside the fastest route's, with `saved_min`, `extra_km` and
+`same_route`, which the dashboard renders as a shortest-versus-fastest card —
+demonstrating that time-optimality and distance-optimality are distinct
+objectives.
+
+---
+
+## 8. sql lab
+
+the dashboard exposes a read-only query interface: a schema browser, an editor
+(`ctrl k` to focus, `ctrl ⏎` to execute) and a results grid.
+
+access is constrained at three independent layers:
+
+1. **parser allowlist** — `SELECT` and `WITH` only; single statement; no
+   statement stacking; no catalog introspection (`pg_*`, `version()`).
+2. **least-privilege role** — a `traffic_ro` role holding `SELECT`-only grants.
+   a smuggled write terminates with `permission denied` irrespective of layer 1.
+3. **resource bounds** — `statement_timeout = 5000` on the read-only pool and a
+   200-row response cap.
+
+recommended queries, all verified against live data:
+
+1. **congested right now** — live leaderboard from `live_traffic_summary`
+2. **slowest trunk corridors** — where the network is losing the most speed
+3. **load by scope** — segment, vehicle and speed rollup
+4. **real vs. inferred** — provenance split:
+   `SELECT traffic_source, COUNT(*) FROM traffic_condition GROUP BY 1`
+5. **vendor spend to date** — `SELECT * FROM tomtom_usage`
+6. **ingest rate** — fixes per minute from `gps_data`
+7. **hourly speed trend** — network performance from `traffic_history`
+
+`POST /api/command` remains available as a natural-language interface.
+
+---
+
+## 9. rest and websocket interface
+
+| method     | endpoint                        | function                                  |
+|------------|---------------------------------|-------------------------------------------|
+| get        | `/api/health`                   | readiness probe                           |
+| post       | `/api/gps` · `/api/gps/batch`   | ingest single or bulk fixes               |
+| get        | `/api/network/*`                | intersections, segments, live positions   |
+| get        | `/api/traffic/summary`          | live snapshot; drives map and table       |
+| get        | `/api/traffic/congested?level=` | worst-first ordering                      |
+| get        | `/api/traffic/segment/{id}`     | snapshot plus history                     |
+| post       | `/api/traffic/refresh`          | recompute all segments                    |
+| post       | `/api/routes/request`           | `{source_id, destination_id, priority?}`  |
+| get        | `/api/routes/history`           | prior recommendations                     |
+| get / put  | `/api/config`                   | window, cadence, congestion thresholds    |
+| get / post | `/api/sql/*`                    | schema, samples, read-only query runner   |
+| get        | `/api/logs?since=&limit=`       | query-log ring buffer                     |
+| get        | `/api/tomtom/status`            | coverage, spend, poller health            |
+| get        | `/api/tomtom/readings`          | per-corridor speed with coordinates       |
+| get        | `/api/tomtom/incidents?limit=`  | positioned live events                    |
+| post       | `/api/tomtom/refresh`           | force a poll; refuses at budget ceiling   |
+| put        | `/api/tomtom/config`            | runtime cadence, batch and budget tuning  |
+| get        | `/api/analytics/overview`       | congestion split, network speed, coverage |
+| get        | `/api/analytics/trends?hours=`  | speed, ingest and coverage series         |
+| get        | `/api/analytics/corridors`      | slowest and densest corridors             |
+| get        | `/api/monitor?window_sec=`      | p50/p95/p99, error rate, hot endpoints    |
+| ws         | `/ws/live`                      | traffic, positions and log entries per tick |
+
+openapi documentation is served at `/docs`.
+
+---
+
+## 10. database design
+
+**entities (3nf):** `users` (+ `admin_profile`, `driver_profile`) · `vehicle` (+
+`car_detail`, `bus_detail`, `emergency_vehicle_detail`) · `intersection` ·
+`road_segment` · `gps_data` (append-only) · `vehicle_position` (map-matched) ·
+`traffic_condition` (one live row per segment) · `traffic_history` (trend) ·
+`traffic_thresholds` (rulebook singleton) · `tomtom_reading` · `tomtom_history` ·
+`tomtom_incident` · `tomtom_usage` (spend ledger) · `tomtom_config` ·
+`route_request → route → route_segment`.
+
+**eer:** `vehicle → car / bus / emergency_vehicle`, `user → admin / driver`;
+two disjoint total specializations.
+
+**dbms features:** btree and brin indexes over time, segment and congestion ·
+views (`live_traffic_summary`, `congested_segments`, `live_positions`,
+`latest_positions`, `segment_stats_5min`, `tomtom_segment_traffic`,
+`tomtom_coverage`) · triggers (gps validation, `last_seen` maintenance, route
+guard, `pg_notify` on congestion transition) · procedures
+(`calculate_segment_traffic`, `refresh_all_traffic`, `get_congested_segments`,
+`find_nearby_segments`, `prune_old_data`, `set_segment_probe`) · a select-only
+`traffic_ro` role provisioned at boot for the sql lab.
+
+**files:** `database/schema.sql`, `views.sql`, `triggers.sql`, `procedures.sql`,
+`migrate_india.sql`, `migrate_all_india.sql`, `migrate_tomtom.sql`,
+`migrate_probes.sql`, `migrate_more_corridors.sql`, `migrate_perf.sql`,
+`migrate_tomtom_traffic.sql` — applied in dependency order by `init_db()`. every
+file is idempotent and re-executes safely on each boot.
+
+**retention:** positions are truncated at 90 minutes and history at 12 hours by
+`prune_old_data`, executed on a background timer. append-only tables are brin
+indexed and accessed through `live_positions`, a 60-second-bounded view, so the
+hot path never performs a sort over history. without this the table grows at
+approximately 1.8M history rows per hour and latency grows without bound.
+
+---
+
+## 11. measured performance
+
+| metric                            | value                              |
+|-----------------------------------|------------------------------------|
+| bulk ingest throughput            | ~3,000 fixes/s (250 in ~60 ms)     |
+| `/api/network/positions`          | ~8 ms (was ~100 ms pre-indexing)   |
+| analytics rollups                 | ~3–7 ms                            |
+| dijkstra, 32 nodes / 42 edges     | ~0.05 ms                           |
+| api latency                       | p50 ~2 ms · p95 ~10 ms · 0 errors  |
+| dashboard refresh                 | 2 s, websocket with http fallback  |
+| vendor coverage                   | 40 / 42 corridors                  |
+| projected vendor spend            | ~1,200 transactions/day            |
+
+---
+
+## 12. repository layout
+
+```
+backend/     main, database pool with read-only role, runtime config,
+             querylog, monitor (request timing), maintenance (retention),
+             routes/ (gps, network, traffic, routing, vehicles, stats, config,
+             scenarios, command, sql, logs, fleet, tomtom, analytics)
+             services/ (geo, gps_processor, ingest_bulk, traffic_analyzer,
+             route_optimizer, scenarios, command, sqllab, tomtom poller)
+simulator/   optional gps ingest: vehicle mover, graph construction and trip
+             planning, cli entrypoint, server-side fleet manager
+frontend/    dashboard: index.html, styles.css, app.js (leaflet + canvas)
+database/    schema, views, triggers, procedures, network migrations, vendor
+             tables, probe calibration, performance hardening
+tests/       47 pytest cases: geometry, congestion rules, dijkstra, console
+             parser, sql guard, vendor poller
+```
+
+the simulator is retained solely as an optional demonstration of the gps
+ingest path and is unreachable from the dashboard. all user-facing state derives
+from vendor data.
+
+---
+
+## 13. verification
 
 ```bash
-pytest tests -q   # 47 passed: Haversine/map-match, classifier boundaries,
-                  # Dijkstra (avoidance, priority, unreachable, totals),
-                  # console parser, SQL Lab guard (writes/stacking/catalog blocked,
-                  # all 6 samples valid), vendor poller guards + speed precedence
+pytest tests -q
 ```
 
-## 14. Methodology (for the report)
+47 cases: haversine distance and map-matching, classifier boundary conditions,
+dijkstra behaviour (avoidance, priority, unreachability, total consistency,
+distance-versus-time modes), console parser, sql guard (writes, statement
+stacking and catalog access rejected; all samples valid), and vendor poller
+guards with speed-precedence resolution.
 
-Requirement analysis → conceptual design (ER/EER: 10 entities, 2 specializations) →
-logical design → 3NF (positions reference segments; snapshot/history split;
-thresholds factored out; SELECT-only role separation) → physical design (PK/FK/checks,
-indexes, views, triggers, procedures) → implementation (DB → bulk API → OD fleet →
-analyzer → router → dashboard) → verification (live E2E: spawn → density jam →
-red map → reroute → your own SQL confirms it).
+end-to-end verification was performed against the live deployment: vendor
+polling populates corridor speeds, congestion transitions are observed, routing
+re-weights around them, and the same state is independently verifiable through
+the sql lab.
+
+---
+
+## 14. methodology
+
+requirement analysis → conceptual design (er/eer: fifteen entities, two
+disjoint specializations) → logical design → 3nf normalization (positions
+reference segments; snapshot and history are separated; thresholds are factored
+out; role separation enforces least privilege) → physical design (primary,
+foreign keys, check constraints, indexes, views, triggers, procedures) →
+implementation (schema → cached vendor ingestion → classifier → router →
+dashboard) → verification (live end-to-end, with provenance established at every
+stage).

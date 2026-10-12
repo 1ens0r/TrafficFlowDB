@@ -47,12 +47,13 @@ def segments():
 
 @router.get("/positions")
 def positions():
-    # Only live dots: fixes older than ~1 min are stale (retired vehicles
-    # vanish from the map instead of haunting it forever).
+    # live_positions is pre-bounded to the last 60 s, so PostgreSQL reads via
+    # idx_position_time instead of sorting the whole append-only table.
     with get_pool().connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT * FROM latest_positions WHERE recorded_at > NOW() - INTERVAL '60 seconds'")
+                "SELECT * FROM live_positions "
+                "WHERE recorded_at > NOW() - INTERVAL '60 seconds'")
             cols = [d[0] for d in cur.description]
             rows = []
             for r in cur.fetchall():

@@ -8,35 +8,46 @@ from __future__ import annotations
 import asyncio
 import json
 import pathlib
+import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from . import querylog, runtime
+from . import maintenance, monitor, querylog, runtime
 from .config import settings
 from .database import close_pool, get_pool, init_db, wait_for_db
-from .routes import command, config, fleet, gps, logs, network, routing, scenarios, sql, stats, traffic, vehicles
+from .routes import analytics, command, config, fleet, gps, logs, network, routing, scenarios, sql, stats, tomtom, traffic, vehicles
 
 FRONTEND_DIR = pathlib.Path(__file__).resolve().parent.parent / "frontend"
+ASSET_VERSION = str(int(time.time()))
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from simulator.fleet import FleetManager
+    from backend.services import tomtom as tomtom_svc
     wait_for_db()
     init_db()
     querylog.log("NET", "lifespan: schema + seed + migrations applied", 0,
                  "API ready")
     app.state.fleet = FleetManager()
     app.state.fleet.start()
+    app.state.tomtom_task = asyncio.create_task(tomtom_svc.run_forever())
+    app.state.maint_task = asyncio.create_task(maintenance.run_forever())
     yield
+    for task in (app.state.tomtom_task, app.state.maint_task):
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
     await app.state.fleet.stop()
     close_pool()
 
 
-app = FastAPI(title="TrafficFlowDB", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="TrafficFlowDB", version="3.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -45,10 +56,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def perf_and_cache(request: Request, call_next):
+    """Time every request for /api/monitor and keep dashboard assets fresh.
+
+    Static assets get no-store so a cached index.html can never be paired
+    with a newer app.js (that mismatch previously blanked the whole page).
+    """
+    t0 = time.perf_counter()
+    response = await call_next(request)
+    ms = (time.perf_counter() - t0) * 1000
+    path = request.url.path
+    if not path.startswith("/ws"):
+        monitor.record(path, request.method, ms, response.status_code)
+    if not path.startswith("/api") and response.status_code < 400:
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
+
 for router in (gps.router, vehicles.router, traffic.router,
                network.router, routing.router, stats.router,
                config.router, scenarios.router, command.router, logs.router,
-               fleet.router, sql.router):
+               fleet.router, sql.router, tomtom.router, analytics.router):
     app.include_router(router)
 
 
@@ -57,7 +86,18 @@ def health():
     with get_pool().connection() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT 1")
-    return {"status": "ok"}
+    return {"status": "ok", "asset_version": ASSET_VERSION}
+
+
+@app.get("/api/monitor")
+def api_monitor(window_sec: int = 300):
+    """API performance + vendor usage (one call, powers the dashboard panel)."""
+    return {"performance": monitor.report(window_sec), "tomtom": tomtom_status_slim()}
+
+
+def tomtom_status_slim() -> dict:
+    from .services import tomtom as _tt
+    return _tt.status()
 
 
 def _jsonable(rows: list[dict]) -> list[dict]:
@@ -80,7 +120,7 @@ async def live(ws: WebSocket):
                     cols = [d[0] for d in cur.description]
                     traffic_rows = _jsonable(
                         [dict(zip(cols, r, strict=True)) for r in cur.fetchall()])
-                    cur.execute("SELECT * FROM latest_positions")
+                    cur.execute("SELECT * FROM live_positions")
                     pcols = [d[0] for d in cur.description]
                     pos_rows = _jsonable(
                         [dict(zip(pcols, r, strict=True)) for r in cur.fetchall()])

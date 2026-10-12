@@ -56,7 +56,7 @@ def test_weight_prefers_fresh_tomtom():
 def test_weight_ignores_stale_tomtom():
     seg = _seg(tomtom_speed=70.0, tomtom_age_s=99999.0)
     _, speed = _weight(seg, False)
-    assert speed == 20.0  # falls back to fleet average
+    assert speed == 20.0  # falls back to the observed average
 
 
 def test_weight_backward_compatible_without_tomtom_keys():

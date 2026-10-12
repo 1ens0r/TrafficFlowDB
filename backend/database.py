@@ -19,7 +19,9 @@ _pool: ConnectionPool | None = None
 _ro_pool: ConnectionPool | None = None
 
 SCHEMA_FILES = ("schema.sql", "views.sql", "triggers.sql", "procedures.sql")
-MIGRATION_FILES = ("migrate_india.sql", "migrate_all_india.sql")
+MIGRATION_FILES = ("migrate_india.sql", "migrate_all_india.sql",
+                   "migrate_tomtom.sql", "migrate_more_corridors.sql",
+                   "migrate_perf.sql", "migrate_probes.sql", "migrate_tomtom_traffic.sql")
 
 
 def get_pool() -> ConnectionPool:

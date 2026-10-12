@@ -25,7 +25,6 @@
     </nav>
     <div class="nav-actions">
       <button class="icon-btn" id="themeBtn" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
-      <button class="btn small" id="customBtn">Customize</button>
       <span class="live-pill" id="livePill">connecting…</span>
     </div>
   </div>
@@ -241,94 +240,6 @@
     <p>TrafficFlowDB · FastAPI + PostgreSQL/PostGIS + Leaflet · Dijkstra on live travel-time weights</p>
   </footer>
 </main>
-
-<!-- Customize drawer -->
-<div class="scrim" id="scrim" hidden></div>
-<aside class="drawer glass closed" id="drawer" aria-label="Customize">
-  <div class="drawer-head">
-    <h3>Customize</h3>
-    <button class="icon-btn" id="drawerClose" aria-label="Close">✕</button>
-  </div>
-
-  <div class="dsec">
-    <h4>Live pipeline</h4>
-    <div class="field">
-      <div class="flabel"><span>Traffic window</span><b id="winVal">5 min</b></div>
-      <input type="range" id="winRange" min="1" max="15" step="1" value="5" />
-    </div>
-    <div class="field">
-      <div class="flabel"><span>Dashboard refresh</span><b id="pollVal">2.0 s</b></div>
-      <input type="range" id="pollRange" min="1" max="10" step="0.5" value="2" />
-    </div>
-  </div>
-
-  <div class="dsec">
-    <h4>Congestion rulebook</h4>
-    <div class="grid2">
-      <div class="field"><div class="flabel"><span>HIGH below</span><span>km/h</span></div><input type="number" id="thHs" step="1" /></div>
-      <div class="field"><div class="flabel"><span>HIGH above</span><span>density</span></div><input type="number" id="thHd" step="0.05" min="0" max="5" /></div>
-      <div class="field"><div class="flabel"><span>MED below</span><span>km/h</span></div><input type="number" id="thMs" step="1" /></div>
-      <div class="field"><div class="flabel"><span>MED above</span><span>density</span></div><input type="number" id="thMd" step="0.05" min="0" max="5" /></div>
-    </div>
-    <button class="btn primary block" id="cfgApply">Apply configuration</button>
-    <p class="drawer-note" id="cfgNote">Thresholds live in PostgreSQL (<code>traffic_thresholds</code>) — applying rewrites them and recomputes every segment.</p>
-  </div>
-
-  <div class="dsec">
-    <h4>GPS ingest simulator <small>(optional)</small></h4>
-    <label class="switch-row"><input type="checkbox" id="fleetOn" /><span>Run synthetic fleet</span><b id="fleetLive"></b></label>
-    <div class="field">
-      <div class="flabel"><span>Vehicles</span><b id="fleetVal">0</b></div>
-      <input type="range" id="fleetRange" min="0" max="500" step="10" value="0" />
-    </div>
-    <button class="btn primary block" id="fleetApply">Apply fleet</button>
-    <p class="drawer-note" id="fleetNote">Off by default — the map runs on <b>real TomTom speeds</b>. Turn this on only to demo the raw GPS ingest path (OD trips → <code>gps_data</code> → analyzer).</p>
-  </div>
-
-  <div class="dsec">
-    <h4>Real-time TomTom <small>(primary source)</small></h4>
-    <p class="drawer-note" id="ttStatus">Checking vendor status…</p>
-    <label class="switch-row"><input type="checkbox" id="ttOn" /><span>Poll TomTom vendor speeds</span><b id="ttLive"></b></label>
-    <div class="field">
-      <div class="flabel"><span>Poll every</span><b id="ttIntVal">300 s</b></div>
-      <input type="range" id="ttInt" min="60" max="1800" step="60" value="300" />
-    </div>
-    <div class="field">
-      <div class="flabel"><span>Segments per cycle</span><b id="ttBatchVal">4</b></div>
-      <input type="range" id="ttBatch" min="1" max="12" step="1" value="4" />
-    </div>
-    <div class="field">
-      <div class="flabel"><span>Daily budget (calls)</span></div>
-      <input type="number" id="ttBudget" value="2000" min="0" max="50000" step="100" />
-    </div>
-    <div class="split">
-      <div class="field"><div class="flabel"><span>&nbsp;</span></div><button class="btn block primary" id="ttApply">Apply</button></div>
-      <div class="field"><div class="flabel"><span>&nbsp;</span></div><button class="btn block" id="ttNow">Refresh now</button></div>
-    </div>
-    <div class="split">
-      <div class="field"><div class="flabel"><span>&nbsp;</span></div><button class="btn block" id="ttInc">Incidents</button></div>
-      <div class="field"><div class="flabel"><span>&nbsp;</span></div><button class="btn block" id="ttOpen">Docs</button></div>
-    </div>
-    <p class="drawer-note">Round-robin, budget-capped: each cycle touches a few corridors, so the free tier (≈2,500/day) never burns. Fresh vendor speeds (≤15 min) override fleet averages in routing.</p>
-  </div>
-
-  <div class="dsec">
-    <h4>Traffic scenarios</h4>
-    <div class="field">
-      <div class="flabel"><span>Jam a road</span></div>
-      <select id="jamSel"></select>
-    </div>
-    <div class="split">
-      <div class="field"><div class="flabel"><span>Vehicles</span></div><input type="number" id="jamCount" value="30" min="1" max="200" /></div>
-      <div class="field"><div class="flabel"><span>&nbsp;</span></div><button class="btn block" id="jamFire">Cause jam</button></div>
-    </div>
-    <div class="split">
-      <div class="field"><div class="flabel"><span>&nbsp;</span></div><button class="btn block" id="rushFire">Rush hour</button></div>
-      <div class="field"><div class="flabel"><span>&nbsp;</span></div><button class="btn danger block" id="resetFire">Reset</button></div>
-    </div>
-    <p class="drawer-note">Scenarios inject through the normal GPS ingest path — the map, logs and router react exactly like real traffic.</p>
-  </div>
-</aside>
 
 <div class="toast" id="toast" hidden></div>
 

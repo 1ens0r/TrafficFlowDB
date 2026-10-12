@@ -288,37 +288,10 @@ tbody tr:hover { background: rgba(128, 128, 128, 0.08); }
 
 /* Drawer — strict field grid: every label row, control and button shares
    one baseline system so rows align picture-perfectly. */
-.scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); z-index: 1500; opacity: 1; transition: opacity 0.3s; }
 .scrim[hidden] { display: none; }
-.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(380px, 94vw); z-index: 1600;
-  background: var(--card); border-left: 1px solid var(--line); box-shadow: var(--shadow);
-  padding: 22px 22px 32px; overflow-y: auto; transform: translateX(0); transition: transform 0.38s cubic-bezier(0.2, 0.8, 0.2, 1), background-color 0.5s; }
-.drawer.closed { transform: translateX(105%); }
-.drawer-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px; }
-.drawer-head h3 { margin: 0; font-size: 22px; letter-spacing: -0.01em; }
-.dsec { margin-top: 22px; }
-.dsec > h4 { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin: 0 0 10px; }
-.field { margin: 0 0 12px; }
-.dsec > .btn.block:last-of-type { margin-top: 2px; }
-.flabel { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px;
-  color: var(--muted); margin: 0 0 6px; }
-.flabel b { color: var(--accent); font-variant-numeric: tabular-nums; font-size: 13px; }
-.drawer input[type="number"], .drawer select { display: block; width: 100%; height: 42px; font: inherit;
-  font-size: 14px; color: var(--ink); border: 1px solid var(--line); border-radius: 11px;
-  padding: 0 12px; margin: 0; background: var(--input); }
-.drawer input[type="range"] { display: block; width: 100%; height: 26px; margin: 0; accent-color: var(--accent); }
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
-.split { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; align-items: start; }
 .btn.block { display: block; width: 100%; height: 42px; padding: 0 12px; margin: 0; border: 1px solid var(--line);
   font-size: 14px; white-space: nowrap; }
 .btn.block.primary { border-color: var(--accent); }
-.switch-row { display: flex; align-items: center; gap: 10px; height: 42px; margin: 0 0 12px;
-  padding: 0 12px; border: 1px solid var(--line); border-radius: 11px; background: var(--input);
-  font-size: 13.5px; cursor: pointer; }
-.switch-row input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
-.switch-row b { margin-left: auto; font-size: 12px; color: var(--green); font-variant-numeric: tabular-nums; }
-.drawer-note { font-size: 12px; color: var(--muted); line-height: 1.55; margin: 10px 0 0; }
-.drawer-note code { font-family: var(--mono); font-size: 11px; }
 
 /* Toast */
 .toast { position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%) translateY(0); z-index: 1800;
@@ -396,11 +369,6 @@ footer { text-align: center; color: var(--muted); font-size: 13px; margin-top: 4
   .reveal { opacity: 1; transform: none; }
 }
 
-.dsec > h4 small { font-weight: 500; opacity: 0.7; text-transform: none;
-  letter-spacing: 0; font-size: 11px; }
-
-/* Source-mix strip: how much of the network is real vendor data. */
-.src-strip { display: flex; gap: 10px; flex-wrap: wrap; margin: -6px 0 18px; }
 .src-pill { font-size: 12.5px; border: 1px solid var(--line); border-radius: 999px;
   padding: 6px 14px; background: var(--input); color: var(--muted); font-variant-numeric: tabular-nums; }
 .src-pill b { font-weight: 700; }

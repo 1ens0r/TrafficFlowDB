@@ -168,14 +168,11 @@ async function loadNetwork() {
   const src = $("srcSel"), dst = $("dstSel");
   src.innerHTML = optGroups(nodes); dst.innerHTML = optGroups(nodes);
   src.value = 101; dst.value = 124; // Delhi -> Mumbai showcase
-  $("jamSel").innerHTML = segments
-    .map((s) => `<option value="${s.id}">#${s.id} ${s.name}</option>`).join("");
-  $("jamSel").value = 45;
   const nat = nodes.filter((n) => n.scope === "national").length;
   $("netSub").textContent =
-    `${nodes.length} intersections (${nat} national hubs) · ${segments.length} corridors · one row per segment, updated on every GPS fix.`;
+    `${nodes.length} intersections (${nat} national hubs) · ${segments.length} corridors · one row per segment, refreshed on every vendor poll.`;
   $("mapSub").textContent =
-    `${nat} national hubs · ${segments.length} live corridors · hover a road for speeds, click a dot for a vehicle. Toggle layers above to declutter.`;
+    `${nat} national hubs · ${segments.length} live corridors · hover a road for its measured speed, click an incident for detail.`;
   for (const n of nodes) {
     if (nodeMarkers.has(n.id)) continue;
     nodeMarkers.set(n.id, L.circleMarker([n.lat, n.lon], {
@@ -680,7 +677,7 @@ async function refreshMonitor() {
   }
 }
 
-/* ---- TomTom controls ---------------------------------------------------------- */
+/* ---- vendor status + map overlays --------------------------------------------- */
 let ttBadgeLive = true;
 async function refreshTomTomBadge() {
   try {
@@ -700,51 +697,6 @@ async function refreshTomTomBadge() {
     }
   } catch { /* vendor status is a nicety */ }
 }
-on($("ttInt"), "input", () => ($("ttIntVal").textContent = $("ttInt").value + " s"));
-on($("ttBatch"), "input", () => ($("ttBatchVal").textContent = $("ttBatch").value));
-async function loadTomTom() {
-  try {
-    const s = await getJSON("/api/tomtom/status");
-    $("ttOn").checked = !!s.enabled;
-    $("ttInt").value = s.interval_sec; $("ttIntVal").textContent = s.interval_sec + " s";
-    $("ttBatch").value = s.batch_size; $("ttBatchVal").textContent = s.batch_size;
-    $("ttBudget").value = s.daily_budget;
-    $("ttLive").textContent = s.key_set ? `${s.fresh_count} fresh` : "no key";
-    $("ttStatus").textContent = s.key_set
-      ? `~${s.est_daily_use} calls/day at this cadence · ${s.used_today}/${s.daily_budget} used today · ${s.incidents} incidents cached.`
-      : "No API key found — set TOMTOM_API_KEY in .env and restart the api container.";
-  } catch { $("ttStatus").textContent = "TomTom endpoint unavailable (backend starting?)"; }
-}
-on($("ttApply"), "click", async () => {
-  try {
-    const c = await putJSON("/api/tomtom/config", {
-      enabled: $("ttOn").checked, interval_sec: Number($("ttInt").value),
-      batch_size: Number($("ttBatch").value), daily_budget: Number($("ttBudget").value),
-    });
-    $("ttLive").textContent = c.enabled ? "on" : "";
-    $("ttStatus").textContent = `Applied — every ${c.interval_sec}s × ${c.batch_size} segments, budget ${c.daily_budget}/day.`;
-    toast("TomTom configuration applied");
-    refreshTomTomBadge();
-  } catch (e) { toast("TomTom apply failed: " + e.message); }
-});
-on($("ttNow"), "click", async () => {
-  try {
-    const r = await postJSON("/api/tomtom/refresh", {});
-    toast(`TomTom: ${r.fetched} corridors refreshed (${r.used_today}/${r.budget} today)`);
-    refreshTomTomBadge(); pollOnce();
-  } catch (e) { toast("Refresh blocked: " + e.message); }
-});
-on($("ttInc"), "click", async () => {
-  try {
-    const r = await postJSON("/api/tomtom/refresh", { incidents: true });
-    toast(`TomTom: ${r.incidents} incidents cached`);
-  } catch (e) { toast("Incidents blocked: " + e.message); }
-});
-on($("ttOpen"), "click", () => {
-  $("sqllab").scrollIntoView({ behavior: "smooth" });
-  setTimeout(() => { $("sqlInput").value = "SELECT * FROM tomtom_reading ORDER BY fetched_at DESC LIMIT 20;"; runSql($("sqlInput").value); }, 400);
-});
-
 /* ---- boot + live loops ----------------------------------------------------------------------- */
 
 let pollCount = 0;
@@ -921,33 +873,6 @@ async function loadSqlLab() {
       c.addEventListener("click", () => { $("sqlInput").value = c.dataset.sql; runSql(c.dataset.sql); }));
   } catch { /* samples are a nicety */ }
 }
-/* ---- fleet (drawer) ---------------------------------------------------------------------- */
-on($("fleetRange"), "input", () => ($("fleetVal").textContent = $("fleetRange").value));
-async function loadFleet() {
-  try {
-    const f = await getJSON("/api/fleet");
-    $("fleetOn").checked = f.enabled;
-    $("fleetRange").value = f.target;
-    $("fleetVal").textContent = f.target;
-    $("fleetLive").textContent = f.enabled ? `${f.alive} live` : "";
-    $("fleetNote").textContent = f.enabled
-      ? `Running: ${f.alive} vehicles live${f.last.ingested ? `, last tick ${f.last.ingested} fixes in ${f.last.ms} ms` : ""}.`
-      : "Spawns/retires live to the target — OD trips through the bulk ingest path. No terminal process needed.";
-  } catch { /* fleet endpoint missing on old backend */ }
-}
-on($("fleetApply"), "click", async () => {
-  try {
-    const f = await postJSON("/api/fleet", {
-      enabled: $("fleetOn").checked, count: Number($("fleetRange").value),
-    });
-    $("fleetLive").textContent = f.enabled ? `${f.alive} live` : "";
-    $("fleetNote").textContent = f.enabled
-      ? `Running — spawning toward ${f.target} vehicles.`
-      : "Fleet stopped and retired.";
-    toast(f.enabled ? `Fleet → ${f.target} vehicles` : "Fleet stopped");
-    pollOnce(); // site-wide counts refresh immediately, not next tick
-  } catch (e) { toast("Fleet failed: " + e.message); }
-});
 /* (NL console rendering retired in favor of SQL Lab — /api/command stays available.) */
 /* (option-chip wiring retired with the NL console.) */
 on($("sqlRun"), "click", () => runSql());
@@ -962,73 +887,16 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-/* ---- customize drawer ------------------------------------------------------------------ */
-function openDrawer(o) {
-  $("drawer").classList.toggle("closed", !o);
-  $("scrim").hidden = !o;
-}
-on($("customBtn"), "click", () => openDrawer(true));
-on($("drawerClose"), "click", () => openDrawer(false));
-on($("scrim"), "click", () => openDrawer(false));
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") openDrawer(false); });
-if ($("drawer")) $("drawer").classList.add("closed");
-
-on($("winRange"), "input", () => ($("winVal").textContent = $("winRange").value + " min"));
-on($("pollRange"), "input", () => ($("pollVal").textContent = Number($("pollRange").value).toFixed(1) + " s"));
-
-async function loadConfig() {
+/* ---- runtime settings ---------------------------------------------------------
+   The Customize drawer is gone, so the dashboard only needs the cadence the
+   server is actually running at. Congestion thresholds remain editable via
+   PUT /api/config or the SQL Lab. */
+async function loadRuntime() {
   try {
     const c = await getJSON("/api/config");
-    $("winRange").value = c.traffic_window_minutes;
-    $("winVal").textContent = c.traffic_window_minutes + " min";
-    $("pollRange").value = c.poll_seconds;
-    $("pollVal").textContent = Number(c.poll_seconds).toFixed(1) + " s";
-    POLL_MS = c.poll_seconds * 1000;
-    $("thHs").value = c.thresholds.high_speed;
-    $("thHd").value = c.thresholds.high_density;
-    $("thMs").value = c.thresholds.med_speed;
-    $("thMd").value = c.thresholds.med_density;
-  } catch { /* backend with old config: controls keep defaults */ }
+    if (Number.isFinite(Number(c.poll_seconds))) POLL_MS = Number(c.poll_seconds) * 1000;
+  } catch { /* backend at default cadence */ }
 }
-on($("cfgApply"), "click", async () => {
-  try {
-    const c = await putJSON("/api/config", {
-      traffic_window_minutes: Number($("winRange").value),
-      poll_seconds: Number($("pollRange").value),
-      thresholds: {
-        high_speed: Number($("thHs").value), high_density: Number($("thHd").value),
-        med_speed: Number($("thMs").value), med_density: Number($("thMd").value),
-      },
-    });
-    POLL_MS = c.poll_seconds * 1000;
-    $("cfgNote").textContent = `Applied — window ${c.traffic_window_minutes} min, thresholds rewritten, all segments recomputed.`;
-    toast("Configuration applied live");
-    pollOnce();
-  } catch (e) { toast("Apply failed: " + e.message); }
-});
-on($("jamFire"), "click", async () => {
-  try {
-    const r = await postJSON("/api/scenarios/jam", {
-      segment_id: Number($("jamSel").value), count: Number($("jamCount").value),
-    });
-    toast(`Jam on ${r.segment} → ${r.traffic.congestion}`);
-    pollOnce();
-  } catch (e) { toast("Jam failed: " + e.message); }
-});
-on($("rushFire"), "click", async () => {
-  try {
-    const r = await postJSON("/api/scenarios/rush-hour", {});
-    toast(`Rush hour: ${r.injected} vehicles on ${r.segments} corridors`);
-    pollOnce();
-  } catch (e) { toast("Failed: " + e.message); }
-});
-on($("resetFire"), "click", async () => {
-  try {
-    const r = await postJSON("/api/scenarios/reset", {});
-    toast(`Cleared ${r.removed_scenario_vehicles} scenario vehicles`);
-    pollOnce();
-  } catch (e) { toast("Failed: " + e.message); }
-});
 
 /* ---- reveal on scroll ----------------------------------------------------------------------- */
 const io = new IntersectionObserver((es) =>
@@ -1052,12 +920,10 @@ async function safe(label, fn) {
   setStatus(false, "connecting…");
   // Loaders are independent — a failure in any one cannot stop the others
   // or the live loop (the old all-or-nothing boot blanked the whole page).
-  safe("config", loadConfig);
+  safe("runtime", loadRuntime);
   safe("network", loadNetwork);
   safe("layers", async () => wireLayers());
   safe("sqllab", loadSqlLab);
-  safe("fleet", loadFleet);
-  safe("tomtom", loadTomTom);
   safe("analytics", refreshAnalytics);
   safe("ttbadge", refreshTomTomBadge);
   safe("monitor", refreshMonitor);
@@ -1081,5 +947,4 @@ async function safe(label, fn) {
   await safe("logs", async () => {
     appendLogs((await getJSON("/api/logs?limit=25")).logs);
   });
-  if (new URLSearchParams(location.search).get("drawer") === "1") openDrawer(true);
 })();

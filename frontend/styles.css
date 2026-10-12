@@ -189,7 +189,6 @@ kbd { font-family: var(--mono); font-size: 11px; background: var(--input); borde
 .vd { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle; }
 .vd.car { background: #0071e3; } .vd.bus { background: #ff9f0a; } .vd.emg { background: #ff453a; }
 .legend.dim { opacity: 0.75; }
-#map .tf-flow { position: absolute; inset: 0; pointer-events: none; z-index: 450; }
 #map { height: 620px; border-radius: 16px; overflow: hidden; background: var(--map-bg);
   transition: background-color 0.5s, box-shadow 0.3s; position: relative; }
 .leaflet-container { font-family: var(--font); background: var(--map-bg);
@@ -376,7 +375,7 @@ footer { text-align: center; color: var(--muted); font-size: 13px; margin-top: 4
 .src-pill.fl b { color: var(--accent); }
 .src-pill.demo em { font-style: normal; opacity: 0.65; font-size: 11px; }
 
-/* Map legend — reflects real TomTom data, not the retired fleet categories. */
+/* Map legend — TomTom measurements only. */
 .legend .sw.ramp { width: 54px; background: linear-gradient(90deg,#f5455c,#fb923c,#fbbf24,#a3e635,#34d058); }
 .legend .dot-tt { width: 8px; height: 8px; border-radius: 50%; background: var(--violet);
   box-shadow: 0 0 0 1.5px rgba(255,255,255,.85); display: inline-block; margin-right: 6px; vertical-align: middle; }
@@ -387,13 +386,6 @@ footer { text-align: center; color: var(--muted); font-size: 13px; margin-top: 4
 /* Direction-of-flow: dash animation on corridor strokes. The dash period is
    rewritten per-segment from the real TomTom speed, so a 90 km/h corridor
    visibly outruns a 30 km/h one. */
-.flowline { stroke-dasharray: 10 14; animation: flowmove 2.2s linear infinite; }
-@keyframes flowmove { to { stroke-dashoffset: -24; } }
-.zoom-hint { position: absolute; left: 12px; bottom: 12px; z-index: 500;
-  font-size: 12px; color: #e5e5ea; background: rgba(10,11,16,.78); border: 1px solid rgba(255,255,255,.12);
-  border-radius: 999px; padding: 7px 14px; backdrop-filter: blur(8px);
-  transition: opacity .3s; pointer-events: none; }
-.zoom-hint.hide { opacity: 0; }
 
 .legend .dot-inc { width: 9px; height: 9px; border-radius: 50%; background: #fb7185;
   box-shadow: 0 0 0 1.5px #fff; display: inline-block; margin-right: 6px; vertical-align: middle; }

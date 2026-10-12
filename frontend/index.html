@@ -133,7 +133,6 @@
       <div class="map-tools">
         <div class="layer-toggles" id="layerToggles">
           <label><input type="checkbox" id="lyrSeg" checked /> Corridors</label>
-          <label><input type="checkbox" id="lyrVeh" checked /> Traffic flow</label>
           <label><input type="checkbox" id="lyrHub" checked /> Hubs</label>
           <label><input type="checkbox" id="lyrTT" checked /> TomTom</label>
           <label><input type="checkbox" id="lyrInc" checked /> Incidents</label>
@@ -145,12 +144,11 @@
           <span><i class="sw route"></i>Your route</span>
         </div>
         <div class="legend dim">
-          <span><i class="note">colour = speed vs limit · dots along a road = live traffic load</i></span>
+          <span class="note">corridors are drawn along TomTom's own road alignment; colour is measured speed against free-flow</span>
         </div>
       </div>
     </div>
-    <div id="map"><div class="zoom-hint" id="zoomHint">Zoom in to see vehicles move at their real speed →</div></div>
-    <p class="flow-note">Dots are vehicles moving at the <b>real speed TomTom reports</b> for that corridor; how many you see comes from the live slow-down index. TomTom publishes segment speeds — not individual vehicle GPS — so positions are interpolated along the corridor.</p>
+    <div id="map"></div>
   </section>
 
   <!-- Route planner -->
@@ -180,7 +178,7 @@
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Segment</th><th>Scope</th><th>km</th><th>Avg km/h</th><th>Vehicles</th><th>Density</th><th>State</th><th>TomTom</th></tr></thead>
+        <thead><tr><th>Segment</th><th>Scope</th><th>km</th><th>Measured km/h</th><th>Free-flow</th><th>Slow-down</th><th>State</th><th>TomTom road</th></tr></thead>
         <tbody id="netBody"></tbody>
       </table>
     </div>
